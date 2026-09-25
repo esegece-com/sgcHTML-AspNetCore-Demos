@@ -1,81 +1,19 @@
-# 10.ShopAssistant (ASP.NET Core)
+# 10.ShopAssistant: AI storefront demo (ASP.NET Core)
 
-AI storefront demo (TechNest) hosted on ASP.NET Core / Kestrel. It is a mirror of
-`demos\60.HTML\10.ShopAssistant` (which hosts `TsgcWebSocketHTTPServer`): the
-reusable logic is copied **verbatim** from that demo, and only the hosting layer
-changes.
-
-A light-themed Bootstrap storefront built from `TsgcHTMLComponent_*` widgets
-(NavBar, Carousel, Badge, Rating, Breadcrumb, Tabs, Accordion, ButtonGroup,
-Toast, AutoComplete, AIChat), with an in-memory per-visitor chat session and a
-grounded (RAG) shop assistant named Nova.
-
-## Copied verbatim (reused, not changed)
-
-- `sgcShop_Catalog.cs` - in-memory product catalog + keyword search / scoring.
-- `sgcShop_AI.cs` - `TShopAIResponder`: grounded RAG answers. Asks a live LLM
-  only when a provider + API key are configured; otherwise a deterministic local
-  fallback that never invents a product or price.
-- `sgcShop_Pages.cs` - the whole storefront view (node layer).
-- `sgcShop_Types.cs` - value types + `TShopSessionStore` (thread-safe in-memory
-  cookie-keyed session store) + config type.
-- `sgcShop_Config.cs` - `System.Text.Json` config loader.
-
-`sgcShop_Server.cs` (the `TsgcWebSocketHTTPServer` host) and the console
-`Program.cs` are intentionally **not** copied; `Program.cs` here is the Kestrel
-host. The tiny `TShopChatBridge` glue class (which wires the AIChat RAG events to
-the responder) is reproduced verbatim at the bottom of `Program.cs`.
-
-## How it is hosted
-
-- `AddSgcHtml(o => o.ServeRootPage = false)` registers the sgcHTML services but
-  tells the adapter NOT to serve a page at `/`, so this app owns page routing.
-- `UseWebSockets()` + `UseSgcHtml()` serve the built-in client assets (the page
-  template links `/bootstrap.min.css` and `/bootstrap.bundle.min.js`, both served
-  by the adapter asset registry), the PWA manifest / service worker and the `/ws`
-  channel. They keep the hosting pattern uniform across the `61.HTML.AspNetCore`
-  demos.
-- The reusable `TShopSessionStore`, `TShopPages` and `TShopAIResponder` are plain
-  C# singletons registered in DI.
-- The 60.HTML host scanned `RawHeaders` for the `Cookie:` line and wrote
-  `Set-Cookie` through `CustomHeaders`. Here the **same** `shop_session` cookie
-  (attributes `Path=/; HttpOnly; SameSite=Lax`) is read/written through
-  `ctx.Request.Cookies` / `ctx.Response.Cookies`, so behavior matches.
-
-## Routes
-
-| Method | Path | Handler |
-|---|---|---|
-| GET  | `/`               | Home (hero carousel + featured products) |
-| GET  | `/catalog`        | Catalog, filtered by the `category` query param |
-| GET  | `/about`          | Store info + FAQ accordion |
-| GET  | `/product/{id}`   | Product detail (200 / 404) - keeps the card links live |
-| POST | `/api/chat`       | Chat turn: persist + `302` to `return_to?chatOpen=1` |
-| GET  | `/favicon.svg`    | Inline brand favicon |
-| any  | (unmapped)        | Reused 404 page |
-
-`POST /api/chat` reproduces the 60.HTML synchronous flow: the message is run
-through `TsgcHTMLComponent_AIChat` (its `OnRAGContext` + `OnChatSend` events
-bridged to `TShopAIResponder`), both turns are appended to the session, and the
-handler redirects to `return_to?chatOpen=1`. The next GET replays the whole
-transcript into the chat widget, so the conversation survives a full page reload.
-
-## AI configuration (keyless by default)
-
-`sgcShopServer.conf.json` sets `ai.provider = "none"`, so Nova answers from the
-local catalog only and the demo builds + runs with **zero** external
-dependencies. To enable a live LLM, set `ai.provider` to `openai` or `anthropic`
-(optionally `ai.model`) and set the `TECHNEST_AI_API_KEY` environment variable to
-your API key. The `listen` section in that file is ignored here; Kestrel owns the
-port (`appsettings.json`).
+TechNest, a light-themed Bootstrap storefront built with sgcHTML .NET,
+running on Kestrel. It shows off a grounded (RAG) AI shop assistant named
+Nova, built from sgcHTML widgets (NavBar, Carousel, Rating, Tabs, Accordion,
+AutoComplete, AIChat) with an in-memory per-visitor chat session.
 
 ## Run
 
+Requires the .NET 8 SDK.
+
 ```
-dotnet run --project sgcShopWeb.csproj
+dotnet run
 ```
 
-Then open (default port `8096`, see `appsettings.json`):
+Then open (default port 8096):
 
 ```
 http://localhost:8096/
@@ -83,5 +21,46 @@ http://localhost:8096/catalog?category=Audio
 http://localhost:8096/about
 ```
 
-Click the chat bubble (bottom-right) and ask Nova about products, pricing, stock,
-shipping or returns.
+Click the chat bubble (bottom-right) and ask Nova about products, pricing,
+stock, shipping or returns.
+
+## Features
+
+- Home page with a hero carousel and featured products.
+- Catalog, filterable by category.
+- Store info and FAQ accordion.
+- Product detail pages.
+- Nova, the AI shop assistant: answers are grounded in the in-demo catalog
+  and store info, so she never invents a product or a price. The
+  conversation is kept per visitor and survives a full page reload.
+
+## AI configuration (works with no key)
+
+By default `sgcShopServer.conf.json` sets the AI provider to `none`, so Nova
+answers from the local catalog only and the demo runs with zero external
+dependencies. To have Nova call a live LLM instead, set the provider to
+`openai` or `anthropic` in that file and set the `TECHNEST_AI_API_KEY`
+environment variable to your API key. The call is a plain HTTP request to
+OpenAI's or Anthropic's chat API; if it fails or no key is set, Nova falls
+back to the local, catalog-grounded answers automatically. The `listen`
+section of that file is ignored; Kestrel owns the port, set in
+`appsettings.json` (default 8096).
+
+## Project layout
+
+| File | Role |
+|---|---|
+| `Program.cs` | App startup, routing, the AIChat-to-Nova wiring |
+| `sgcShop_Pages.cs` | The storefront view |
+| `sgcShop_Catalog.cs` | In-memory product catalog and keyword search |
+| `sgcShop_AI.cs` | Nova: grounded RAG answers, live LLM call, local fallback |
+| `sgcShop_Types.cs` | Value types and the per-visitor session store |
+| `sgcShop_Config.cs` | Configuration loader |
+| `sgcShopServer.conf.json` | AI provider, env var name, model |
+| `appsettings.json` | Kestrel listen port |
+
+---
+
+Built with sgcHTML .NET, https://www.esegece.com. The Community edition shows
+a one-time startup notice and a "Built with sgcHTML .NET Community Edition"
+badge on every page.
