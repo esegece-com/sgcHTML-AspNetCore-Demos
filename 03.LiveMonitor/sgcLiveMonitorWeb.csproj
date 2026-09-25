@@ -1,0 +1,55 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Live Monitor demo on ASP.NET Core (mirror of demos\60.HTML\03.LiveMonitor).
+
+    The 60.HTML version hosts a TsgcWebSocketHTTPServer, renders every page in
+    DispatchRequest AND pushes live dashboard fragments over the WebSocket from a
+    System.Threading.Timer (BroadcastFragment every ~1500 ms). This mirror keeps
+    the SAME reusable logic (sgcLiveMonitor_Bcrypt.cs, sgcLiveMonitor_Config.cs,
+    sgcLiveMonitor_DB.cs, sgcLiveMonitor_I18n.cs, sgcLiveMonitor_Pages.cs,
+    sgcLiveMonitor_Passkeys.cs, sgcLiveMonitor_Sessions.cs and
+    sgcLiveMonitor_Types.cs are copied VERBATIM) but hosts it on Kestrel:
+
+      - The ASP.NET Core adapter serves the built-in client assets (Bootstrap /
+        Chart.js / htmx / htmx-ext-ws, all by file name) and OWNS the htmx
+        WebSocket channel at /ws.
+      - This app owns every page route via Minimal API endpoints (the heavy admin
+        stack: bcrypt + WebAuthn passkeys, the in-memory cookie session store,
+        i18n and the SQLite seed - all the reused plain-C# files).
+      - The 60.HTML push timer becomes a BackgroundService (hosted service): every
+        ~1500 ms it builds the SAME live metric OOB fragment bundle and broadcasts
+        it through ISgcHtmlHub.BroadcastAsync. The engine's own Server-bound
+        BroadcastFragment is a no-op under Kestrel, so push MUST go through the hub.
+
+    The two host files that were NOT copied are sgcLiveMonitor_Server.cs (the
+    TsgcWebSocketHTTPServer host) and the console Program.cs. Only the hosting
+    layer (Program.cs + sgcLiveMonitorWebHost.cs) is new.
+
+    Nullable + ImplicitUsings are disabled: the reused files carry no nullable
+    reference annotations (they predate them), matching the 60.HTML build.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>LiveMonitor</RootNamespace>
+    <AssemblyName>sgcLiveMonitorWeb</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Same SQLite provider + version the 60.HTML console demo used. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="sgcLiveMonitorServer.conf.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

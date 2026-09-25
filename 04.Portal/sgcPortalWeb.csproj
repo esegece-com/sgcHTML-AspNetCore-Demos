@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Customer Portal web-app demo on ASP.NET Core (mirror of demos\60.HTML\04.Portal).
+
+    The 60.HTML version hosts a TsgcWebSocketHTTPServer and renders every page in
+    DispatchRequest. This mirror keeps the SAME reusable logic (sgcPortal_Bcrypt.cs,
+    sgcPortal_Config.cs, sgcPortal_DB.cs, sgcPortal_I18n.cs, sgcPortal_Pages.cs,
+    sgcPortal_Passkeys.cs, sgcPortal_Sessions.cs and sgcPortal_Types.cs are copied
+    VERBATIM) but hosts it on Kestrel: the ASP.NET Core adapter serves the built-in
+    client assets (Bootstrap / Chart.js / htmx, all by file name) and the htmx
+    WebSocket channel, and this app owns every page route via Minimal API
+    endpoints. Auth (bcrypt + WebAuthn passkeys), the in-memory cookie session
+    store, i18n and the SQLite CRUD are all the reused plain-C# files; only the
+    hosting layer (Program.cs + sgcPortalWebHost.cs) is new.
+
+    This mirrors the host pattern established by the 01.ERP / 02.AdminCRUD ports.
+    The Portal-specific part is the DUAL-AREA role model: a role 'customer' login
+    is confined to its self-service area (orders / profile / support), while an
+    'admin' or 'user' login reaches the back-office (customers / providers /
+    products / invoices / reports), with 'admin' additionally owning users +
+    settings + firewall + audit. See sgcPortalWebHost.Guarded / GuardedStaff /
+    GuardedAdmin / GuardedCustomer + RootGet.
+
+    The two host files that were NOT copied are sgcPortal_Server.cs (the
+    TsgcWebSocketHTTPServer host) and the console Program.cs.
+
+    Nullable + ImplicitUsings are disabled: the reused files carry no nullable
+    reference annotations (they predate them), matching the 60.HTML build.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Portal</RootNamespace>
+    <AssemblyName>sgcPortalWeb</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Same SQLite provider + version the 60.HTML console demo used. -->
+    <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="sgcPortalServer.conf.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

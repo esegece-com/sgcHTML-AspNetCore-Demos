@@ -1,0 +1,3135 @@
+// ***************************************************************************
+//  sgcAdmin - mini ERP web-app demo (node-based view layer)
+//  Port of delphi\Demos\60.HTML\50.Admin\Source\sgcAdmin_Pages.pas
+//
+//  written by eSeGeCe
+//  copyright © 2026
+//  Email : info@esegece.com
+//  Web : https://www.esegece.com
+// ***************************************************************************
+//
+// Node-based view layer for the Admin Console demo. Zero custom HTML strings: each
+// page builds a node tree, renders it to HTML and returns it. Every page is
+// themed (light/dark/system) and localized (en/es/de/fr) and the in-app pages
+// render their body inside a shared shell (sidebar + navbar with theme and
+// language switchers). The managed port keeps the Delphi class + method names;
+// .NET is GC-managed so the Delphi .Free calls are dropped.
+
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
+using esegece.sgcWebSockets;
+
+namespace Admin
+{
+    public class TERPPages
+    {
+        // ---------------------------------------------------------------------
+        // theme CSS constants (copied verbatim from the Delphi)
+        // ---------------------------------------------------------------------
+
+        // --- Admin Console theme: DARK ANALYTICS + VIOLET ACCENT ---
+        // A single self-contained theme (the app is dark by default). Deliberately
+        // nothing like the ERP demo: slate page background (#0F172A), slate-800
+        // surfaces (#1E293B), violet primary (#7C3AED), an indigo->violet gradient
+        // for the top bar + KPI tiles. The rules target PLAIN Bootstrap classes
+        // (.card / .table / .form-control / .btn-primary ...) so swapped htmx
+        // fragments (which render with no template/shell) are dark too.
+        // The icon rail width (68px) is inlined wherever the Delphi concatenated
+        // CS_RAIL_WIDTH.
+        private const string CS_THEME_ADMIN =
+            "@import url(\"https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap\");" +
+            "body{font-family:\"Inter\",-apple-system,BlinkMacSystemFont,\"Segoe UI\",Roboto,sans-serif;background:#0F172A;color:#E2E8F0;line-height:1.6;}" +
+            ":root{--bs-primary:#7C3AED;--bs-primary-rgb:124,58,237;" +
+            "--bs-link-color:#A855F7;--bs-link-color-rgb:168,85,247;" +
+            "--bs-link-hover-color:#C084FC;--bs-link-hover-color-rgb:192,132,252;" +
+            "--bs-body-color:#E2E8F0;--bs-body-color-rgb:226,232,240;" +
+            "--bs-body-bg:#0F172A;--bs-body-bg-rgb:15,23,42;" +
+            "--bs-secondary-color:#94A3B8;--bs-secondary-color-rgb:148,163,184;" +
+            "--bs-tertiary-bg:#1E293B;--bs-border-color:#334155;" +
+            "--bs-border-color-translucent:rgba(124,58,237,.25);}" +
+            // Buttons. Primary + outline-primary recoloured to violet; outline-secondary
+            // tuned for the dark surface.
+            ".btn{border-radius:9px;font-weight:600;}" +
+            ".btn-primary{--bs-btn-bg:#7C3AED;--bs-btn-border-color:#7C3AED;--bs-btn-hover-bg:#8B5CF6;--bs-btn-hover-border-color:#8B5CF6;--bs-btn-active-bg:#6D28D9;--bs-btn-active-border-color:#6D28D9;--bs-btn-color:#fff;--bs-btn-hover-color:#fff;}" +
+            ".btn-outline-primary{--bs-btn-color:#A855F7;--bs-btn-border-color:#7C3AED;--bs-btn-hover-bg:#7C3AED;--bs-btn-hover-border-color:#8B5CF6;--bs-btn-hover-color:#fff;}" +
+            ".btn-outline-secondary{--bs-btn-color:#CBD5E1;--bs-btn-border-color:#475569;--bs-btn-hover-bg:#334155;--bs-btn-hover-border-color:#475569;--bs-btn-hover-color:#fff;}" +
+            ".btn-warning{--bs-btn-bg:#F59E0B;--bs-btn-border-color:#F59E0B;--bs-btn-hover-bg:#FBBF24;--bs-btn-hover-border-color:#FBBF24;--bs-btn-color:#1E293B;--bs-btn-hover-color:#1E293B;}" +
+            // Surfaces.
+            ".card{border-radius:14px;border:1px solid #334155;background:#1E293B;color:#E2E8F0;box-shadow:0 1px 3px rgba(0,0,0,.4),0 1px 2px rgba(0,0,0,.3);}" +
+            ".card-header{background:#243045;border-bottom:1px solid #334155;color:#E2E8F0;font-weight:600;}" +
+            ".bg-light{background-color:#1E293B !important;color:#E2E8F0 !important;}" +
+            ".bg-white{background-color:#1E293B !important;}" +
+            ".text-muted{color:#94A3B8 !important;}" +
+            ".text-dark{color:#E2E8F0 !important;}" +
+            ".border,.border-top,.border-bottom,.border-start,.border-end{border-color:#334155 !important;}" +
+            "hr{border-color:#334155;opacity:.6;}" +
+            // Tables (PLAIN .table so htmx fragments inherit the dark + striped look).
+            ".table{--bs-table-bg:#1E293B;--bs-table-color:#E2E8F0;--bs-table-border-color:#334155;--bs-table-striped-bg:#243045;--bs-table-striped-color:#E2E8F0;--bs-table-hover-bg:#2C3A52;--bs-table-hover-color:#fff;color:#E2E8F0;border-color:#334155;}" +
+            ".table>:not(caption)>*>*{background-color:var(--bs-table-bg);color:var(--bs-table-color);border-bottom-color:#334155;}" +
+            ".table-striped>tbody>tr:nth-of-type(odd)>*{background-color:var(--bs-table-striped-bg);color:var(--bs-table-striped-color);}" +
+            ".table-light,thead.table-light th{--bs-table-bg:#243045;background:#243045 !important;color:#94A3B8 !important;border-color:#334155;text-transform:uppercase;font-size:.74rem;letter-spacing:.04em;}" +
+            ".table thead th{border-bottom:1px solid #334155;}" +
+            // Forms.
+            ".form-control,.form-select{background:#0F172A;border-color:#334155;color:#E2E8F0;border-radius:9px;}" +
+            ".form-control::placeholder{color:#64748B;}" +
+            ".form-control:focus,.form-select:focus{background:#0F172A;color:#E2E8F0;border-color:#7C3AED;box-shadow:0 0 0 .2rem rgba(124,58,237,.25);}" +
+            ".form-label{color:#CBD5E1;font-weight:500;}" +
+            ".list-group-item{background:#1E293B;border-color:#334155;color:#E2E8F0;}" +
+            ".modal-content{background:#1E293B;color:#E2E8F0;border:1px solid #334155;}" +
+            // Pagination / tabs / dropdowns.
+            ".page-link{background:#1E293B;border-color:#334155;color:#E2E8F0;}" +
+            ".page-item.active .page-link{background:#7C3AED;border-color:#7C3AED;color:#fff;}" +
+            ".nav-tabs{border-bottom-color:#334155;}" +
+            ".nav-tabs .nav-link{color:#94A3B8;}" +
+            ".nav-tabs .nav-link.active{background:#1E293B;border-color:#334155 #334155 #1E293B;color:#fff;}" +
+            ".dropdown-menu{background:#1E293B;border-color:#334155;}" +
+            ".dropdown-item{color:#E2E8F0;}" +
+            ".dropdown-item:hover,.dropdown-item:focus{background:#334155;color:#fff;}" +
+            // Links + alerts + badges tuned to the violet palette.
+            "a{color:#A855F7;}a:hover{color:#C084FC;}" +
+            ".alert-info{background:rgba(124,58,237,.15);border-color:#7C3AED;color:#C084FC;}" +
+            ".alert-success{background:rgba(16,185,129,.15);border-color:#10B981;color:#6EE7B7;}" +
+            ".alert-danger{background:rgba(239,68,68,.15);border-color:#EF4444;color:#FCA5A5;}" +
+            ".badge.bg-primary{background:#7C3AED !important;}" +
+            ".badge.bg-info{background:#6366F1 !important;color:#fff;}" +
+            ".badge.bg-secondary{background:#475569 !important;}" +
+            ".badge.bg-warning{background:#F59E0B !important;color:#1E293B;}" +
+            // ---------- Analytics shell ----------
+            // Fixed-left icon rail.
+            ".admin-rail{position:fixed;top:0;left:0;bottom:0;width:68px;background:#1E293B;border-right:1px solid #334155;display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:6px;z-index:1050;}" +
+            ".admin-rail .rail-logo{margin-bottom:10px;display:flex;}" +
+            ".admin-rail .rail-link{width:44px;height:44px;display:flex;align-items:center;justify-content:center;border-radius:11px;color:#94A3B8;transition:all .15s ease;}" +
+            ".admin-rail .rail-link:hover{background:#334155;color:#E2E8F0;}" +
+            ".admin-rail .rail-link.active{background:#7C3AED;color:#fff;box-shadow:0 4px 10px rgba(124,58,237,.45);}" +
+            ".admin-rail .rail-link svg{width:22px;height:22px;}" +
+            // Sticky gradient top bar (pushed right by the rail).
+            ".admin-topbar{position:sticky;top:0;left:68px;margin-left:68px;height:60px;display:flex;align-items:center;gap:14px;padding:0 22px;background:linear-gradient(135deg,#6366F1 0%,#A855F7 100%);box-shadow:0 2px 12px rgba(0,0,0,.35);z-index:1040;}" +
+            ".admin-topbar .topbar-brand{font-weight:800;color:#fff;font-size:1.12rem;letter-spacing:.2px;text-decoration:none;}" +
+            ".admin-topbar .topbar-search{flex:0 1 280px;}" +
+            ".admin-topbar .topbar-search input{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.25);color:#fff;border-radius:999px;padding:6px 16px;width:100%;}" +
+            ".admin-topbar .topbar-search input::placeholder{color:rgba(255,255,255,.8);}" +
+            ".admin-topbar .topbar-user{color:#fff;font-weight:500;}" +
+            ".admin-topbar .btn-outline-light{--bs-btn-color:#fff;--bs-btn-border-color:rgba(255,255,255,.7);--bs-btn-hover-bg:#fff;--bs-btn-hover-color:#7C3AED;--bs-btn-hover-border-color:#fff;border-radius:999px;}" +
+            ".admin-topbar .nav-link,.admin-topbar .navbar-text{color:#fff !important;}" +
+            ".admin-topbar .dropdown-menu{background:#1E293B;}" +
+            // Content area pushed right by the rail.
+            ".admin-content{margin-left:68px;padding:24px 28px;}" +
+            // KPI tiles: indigo->violet gradient, white text, rounded with soft shadow.
+            ".kpi-tile{background:linear-gradient(135deg,#6366F1 0%,#A855F7 100%);color:#fff;border-radius:16px;padding:20px 22px;box-shadow:0 8px 22px rgba(99,102,241,.35);height:100%;}" +
+            ".kpi-tile .kpi-num{font-size:1.9rem;font-weight:800;line-height:1.1;margin:0;}" +
+            ".kpi-tile .kpi-label{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;opacity:.92;margin:0;}" +
+            ".kpi-tile .kpi-icon{opacity:.9;}" +
+            ".admin-footer a{color:#A855F7;}";
+
+        // Stacking + responsive helpers for the analytics shell. On narrow screens
+        // the rail collapses to the top so content is not clipped.
+        private const string CS_SHELL_RULES =
+            "@media (max-width:767.98px){.admin-rail{flex-direction:row;width:100%;height:54px;bottom:auto;padding:0 10px;justify-content:flex-start;gap:4px;overflow-x:auto;}" +
+            ".admin-rail .rail-logo{margin-bottom:0;margin-right:6px;}" +
+            ".admin-topbar{position:static;left:0;margin-left:0;}" +
+            ".admin-content{margin-left:0;padding:16px;}}";
+
+        // Icon-rail glyphs (Bootstrap-icons style, 16x16 viewBox, currentColor). The
+        // rail CSS sizes them to 22px. Used by BuildIconRail for the icon-only links.
+        private const string CS_RAIL_DASHBOARD =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" " +
+            "viewBox=\"0 0 16 16\"><path d=\"M0 1a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0" +
+            " 1-1 1H1a1 1 0 0 1-1-1zm9 0a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v3a1 1 0 0 1-1 " +
+            "1h-5a1 1 0 0 1-1-1zM0 10a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H1a" +
+            "1 1 0 0 1-1-1zm9-3a1 1 0 0 1 1-1h5a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-5a1 1 0" +
+            " 0 1-1-1z\"/></svg>";
+        private const string CS_RAIL_PRODUCTS =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" " +
+            "viewBox=\"0 0 16 16\"><path d=\"M8.186 1.113a.5.5 0 0 0-.372 0L1.846 3.5 8 " +
+            "5.961 14.154 3.5zM15 4.239l-6.5 2.6v7.922l6.224-2.49A.5.5 0 0 0 15 11.5z" +
+            "m-7.5 10.522V6.84L1 4.239v7.261a.5.5 0 0 0 .276.447z\"/></svg>";
+        private const string CS_RAIL_CUSTOMERS =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" " +
+            "viewBox=\"0 0 16 16\"><path d=\"M15 14s1 0 1-1-1-4-5-4-5 3-5 4 1 1 1 1zm-7." +
+            "978-1A.261.261 0 0 1 7 13h4.99a.27.27 0 0 1 .026-.004 4 4 0 0 0-8.04 0zM" +
+            "11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6m-9 6s-1 0-1-1 1-4 6-4 6 3 6 4-1 1-1 1zm" +
+            "9-7a3 3 0 1 0 0-6 3 3 0 0 0 0 6\"/></svg>";
+        private const string CS_RAIL_INVOICES =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" " +
+            "viewBox=\"0 0 16 16\"><path d=\"M14 1a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H2a1 1 0" +
+            " 0 1-1-1V2a1 1 0 0 1 1-1zM2 0a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0" +
+            " 2-2V2a2 2 0 0 0-2-2z\"/><path d=\"M3 4.5a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 " +
+            "1h-9a.5.5 0 0 1-.5-.5m0 3a.5.5 0 0 1 .5-.5h9a.5.5 0 0 1 0 1h-9a.5.5 0 0 " +
+            "1-.5-.5m0 3a.5.5 0 0 1 .5-.5h6a.5.5 0 0 1 0 1h-6a.5.5 0 0 1-.5-.5\"/></svg>";
+        private const string CS_RAIL_USERS =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" " +
+            "viewBox=\"0 0 16 16\"><path d=\"M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6m2-3a2 2 0 " +
+            "1 1-4 0 2 2 0 0 1 4 0m4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4m-1-.004" +
+            "c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.289 10 8 10c-2.29 0-3.5" +
+            "16.68-4.168 1.332-.678.678-.83 1.418-.832 1.664z\"/></svg>";
+        private const string CS_RAIL_SECURITY =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" fill=\"currentColor\" " +
+            "viewBox=\"0 0 16 16\"><path d=\"M8 1a2 2 0 0 1 2 2v4H6V3a2 2 0 0 1 2-2m3 6V" +
+            "3a3 3 0 0 0-6 0v4a2 2 0 0 0-2 2v5a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V9a2 2 0 " +
+            "0 0-2-2\"/></svg>";
+        // Topbar search glyph for the analytics shell.
+        private const string CS_ICON_SEARCH =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"16\" height=\"16\" " +
+            "fill=\"currentColor\" viewBox=\"0 0 16 16\"><path d=\"M11.742 10.344a6.5 6.5 " +
+            "0 1 0-1.397 1.398h-.001q.044.06.098.115l3.85 3.85a1 1 0 0 0 1.415-1.414l" +
+            "-3.85-3.85a1 1 0 0 0-.115-.1zM12 6.5a5.5 5.5 0 1 1-11 0 5.5 5.5 0 0 1 11" +
+            " 0\"/></svg>";
+
+        // Inline Bootstrap-style SVG glyphs for the KPI cards (24x24, currentColor).
+        private const string CS_ICON_CUSTOMERS =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"26\" height=\"26\" " +
+            "fill=\"currentColor\" viewBox=\"0 0 16 16\"><path d=\"M15 14s1 0 1-1-1-4-5-4" +
+            "-5 3-5 4 1 1 1 1zm-7.978-1A.261.261 0 0 1 7 13h4.99a.27.27 0 0 1 .026" +
+            "-.004 4 4 0 0 0-8.04 0zM11 7a3 3 0 1 0 0-6 3 3 0 0 0 0 6m-9 6s-1 0-1-1" +
+            " 1-4 6-4 6 3 6 4-1 1-1 1zm9-7a3 3 0 1 0 0-6 3 3 0 0 0 0 6\"/></svg>";
+        private const string CS_ICON_PRODUCTS =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"26\" height=\"26\" " +
+            "fill=\"currentColor\" viewBox=\"0 0 16 16\"><path d=\"M8.186 1.113a.5.5 0 0 0" +
+            "-.372 0L1.846 3.5 8 5.961 14.154 3.5zM15 4.239l-6.5 2.6v7.922l6.224-2.49" +
+            "A.5.5 0 0 0 15 11.5zm-7.5 10.522V6.84L1 4.239v7.261a.5.5 0 0 0 .276.447z" +
+            "\"/></svg>";
+        private const string CS_ICON_PROVIDERS =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"26\" height=\"26\" " +
+            "fill=\"currentColor\" viewBox=\"0 0 16 16\"><path d=\"M0 3.5A1.5 1.5 0 0 1 " +
+            "1.5 2h9A1.5 1.5 0 0 1 12 3.5V5h1.02a1.5 1.5 0 0 1 1.17.563l1.481 1.85a" +
+            "1.5 1.5 0 0 1 .329.938V10.5a1.5 1.5 0 0 1-1.5 1.5H14a2 2 0 1 1-4 0H5a2 " +
+            "2 0 1 1-3.998-.085A1.5 1.5 0 0 1 0 10.5zm1.294 7.456A2 2 0 0 1 4.732 " +
+            "11h5.536a2 2 0 0 1 .732-.732V3.5a.5.5 0 0 0-.5-.5h-9a.5.5 0 0 0-.5.5z" +
+            "M12 10a2 2 0 0 1 1.732 1h.768a.5.5 0 0 0 .5-.5V8.35a.5.5 0 0 0-.11-.312" +
+            "l-1.48-1.85A.5.5 0 0 0 13.02 6H12zm-9 1a1 1 0 1 0 0 2 1 1 0 0 0 0-2m9 " +
+            "0a1 1 0 1 0 0 2 1 1 0 0 0 0-2\"/></svg>";
+        private const string CS_ICON_INVOICES =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"26\" height=\"26\" " +
+            "fill=\"currentColor\" viewBox=\"0 0 16 16\"><path d=\"M5 1.5A1.5 1.5 0 0 1 " +
+            "6.5 0h7A1.5 1.5 0 0 1 15 1.5v13a1.5 1.5 0 0 1-1.5 1.5H6.5A1.5 1.5 0 0 1 " +
+            "5 14.5zM6.5 1a.5.5 0 0 0-.5.5v13a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5v-13a" +
+            ".5.5 0 0 0-.5-.5zM3 4.5a.5.5 0 0 1 .5.5v9a.5.5 0 0 1-1 0V5a.5.5 0 0 1 " +
+            ".5-.5m-2 2A.5.5 0 0 1 1.5 7v5a.5.5 0 0 1-1 0V7a.5.5 0 0 1 .5-.5\"/></svg>";
+        private const string CS_ICON_REVENUE =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"26\" height=\"26\" " +
+            "fill=\"currentColor\" viewBox=\"0 0 16 16\"><path d=\"M4 10.781c.148 1.667 " +
+            "1.513 2.85 3.591 3.003V15h1.043v-1.216c2.27-.179 3.678-1.438 3.678-3.3" +
+            "63 0-1.747-1.097-2.685-3.054-3.151l-.624-.156V3.713c1.06.151 1.738.721 " +
+            "1.9 1.535H12.4c-.138-1.643-1.452-2.812-3.115-2.928V1H8.243v1.32c-1.943" +
+            ".192-3.348 1.36-3.348 3.234 0 1.59 1.051 2.638 2.83 3.057l.535.136v3.07" +
+            "4c-1.09-.16-1.81-.748-1.97-1.59zm4.978 2.119v-2.928l.367.092c1.077.27 " +
+            "1.66.749 1.66 1.495 0 .898-.668 1.332-2.027 1.341m-1.04-7.137c-1.234" +
+            "-.293-1.74-.752-1.74-1.494 0-.842.604-1.479 1.74-1.604z\"/></svg>";
+
+        // Inline eSeGeCe brand mark (self-contained SVG, em-sized so it scales with
+        // the surrounding font). Used in the sidebar, navbar, login and footer brand.
+        private const string CS_ESEGECE_LOGO_SVG =
+            "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\" " +
+            "width=\"1.6em\" height=\"1.6em\" role=\"img\" aria-label=\"eSeGeCe\" " +
+            "class=\"me-2 flex-shrink-0\"><rect width=\"64\" height=\"64\" rx=\"12\" " +
+            "fill=\"#7C3AED\"/><text x=\"32\" y=\"47\" font-family=\"Arial,Helvetica," +
+            "sans-serif\" font-weight=\"900\" font-size=\"44\" text-anchor=\"middle\" " +
+            "fill=\"#FFFFFF\">e</text></svg>";
+
+        // ---------------------------------------------------------------------
+        // fields + i18n shortcut
+        // ---------------------------------------------------------------------
+
+        // Brand text shown in the sidebar + navbar. When empty the localized
+        // app.title is used. The server sets this from the company_name setting.
+        private string FBrand = string.Empty;
+
+        // Optional brand override (company name). When empty the localized
+        // app.title is shown in the sidebar + navbar.
+        public string Brand
+        {
+            get { return FBrand; }
+            set { FBrand = value; }
+        }
+
+        // i18n lookup shortcut (mirrors the Delphi free function T).
+        private static string T(string aKey, string aLang)
+        {
+            return I18n.T(aKey, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // formatting helpers (mirror the Delphi free functions)
+        // ---------------------------------------------------------------------
+
+        // Minimal HTML-escape for text spliced into raw markup (device names, dates).
+        private static string HtmlEsc(string aValue)
+        {
+            string vResult = (aValue ?? string.Empty).Replace("&", "&amp;");
+            vResult = vResult.Replace("<", "&lt;");
+            vResult = vResult.Replace(">", "&gt;");
+            vResult = vResult.Replace("\"", "&quot;");
+            return vResult;
+        }
+
+        private static string FmtDate(DateTime aValue)
+        {
+            if (aValue <= DateTime.MinValue)
+                return "-";
+            return aValue.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+        }
+
+        // Date-only (no time) for invoice issue/due dates. '-' when unset.
+        private static string FmtDateOnly(DateTime aValue)
+        {
+            if (aValue <= DateTime.MinValue)
+                return "-";
+            return aValue.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        // A value as an HTML date-input value (yyyy-mm-dd), empty when unset.
+        private static string FmtDateInput(DateTime aValue)
+        {
+            if (aValue <= DateTime.MinValue)
+                return string.Empty;
+            return aValue.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        // Format an amount with 2 decimals using a '.' separator, then prefix the
+        // currency code (e.g. 'EUR 1234.50').
+        private static string FmtMoney(double aValue, string aCurrency)
+        {
+            string vCur = (aCurrency ?? string.Empty).Trim();
+            if (vCur == "")
+                vCur = "EUR";
+            return vCur + " " + aValue.ToString("#,##0.00", CultureInfo.InvariantCulture);
+        }
+
+        // Render a double with 2 decimals and a '.' separator for input values.
+        private static string FmtNum2(double aValue)
+        {
+            return aValue.ToString("0.00", CultureInfo.InvariantCulture);
+        }
+
+        // ---------------------------------------------------------------------
+        // private brand / theme helpers
+        // ---------------------------------------------------------------------
+
+        // The brand to display: FBrand when non-empty, else T('app.title', aLang).
+        private string BrandText(string aLang)
+        {
+            if (FBrand != null && FBrand.Trim() != "")
+                return FBrand;
+            return T("app.title", aLang);
+        }
+
+        // Wraps an already-built body in a Bootstrap template. The Admin Console is
+        // a DARK analytics app: there is a single theme (dark + violet) applied to
+        // every page. aTheme is accepted for API compatibility but the template
+        // always renders dark (data-bs-theme="dark"); the violet accent, the icon-
+        // rail shell and the KPI gradient all come from CS_THEME_ADMIN.
+        private string WrapTemplate(string aTitle, string aBody, string aTheme, string aLang)
+        {
+            var oTpl = new TsgcHTMLTemplate_Bootstrap();
+            oTpl.Title = aTitle;
+            oTpl.HtmlLang = aLang;
+            oTpl.Viewport = "width=device-width, initial-scale=1";
+            oTpl.HeadNodes.AddRaw("<link rel=\"icon\" type=\"image/svg+xml\" " +
+                "href=\"/favicon.svg\">");
+            oTpl.HeadNodes.AddRaw("<script src=\"/htmx.min.js\"></script>");
+            oTpl.HtmlTheme = "dark";
+            oTpl.DarkMode = true;
+            oTpl.CustomCSS = TsgcHTMLThemeController.GetSharedCSS() + CS_THEME_ADMIN +
+                CS_SHELL_RULES;
+            oTpl.BodyContent = aBody;
+            return oTpl.GetHTML();
+        }
+
+        // ---------------------------------------------------------------------
+        // icon rail / top bar / dropdowns
+        // ---------------------------------------------------------------------
+
+        // Fixed-left icon rail: the eSeGeCe logo mark on top, then a vertical stack
+        // of icon-only links (each with a title="" tooltip). The active item gets a
+        // violet rounded background. Users item only when aRole='admin'.
+        private string BuildIconRail(string aActiveMenu, string aRole, string aLang)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oNav = new TsgcHTMLContainer("nav");
+            oNav.CSSClass = "admin-rail";
+
+            // Logo mark on top (links home).
+            var oLogo = new TsgcHTMLContainer("a");
+            oLogo.Attributes = "href=\"/\" class=\"rail-logo\" title=\"" +
+                HtmlEsc(BrandText(aLang)) + "\"";
+            oLogo.AddRaw(CS_ESEGECE_LOGO_SVG);
+            oNav.Add(oLogo);
+
+            // One icon-only rail link: an <a> with a title="" tooltip; the active
+            // item carries the 'active' class (violet rounded background).
+            Action<string, string, string, string> addRailLink =
+                (aHref, aTitleKey, aMenu, aIcon) =>
+            {
+                string vClass = "rail-link";
+                if (string.Equals(aActiveMenu, aMenu, StringComparison.OrdinalIgnoreCase))
+                    vClass = vClass + " active";
+                var oLink = new TsgcHTMLContainer("a");
+                oLink.Attributes = "href=\"" + aHref + "\" class=\"" + vClass +
+                    "\" title=\"" + HtmlEsc(T(aTitleKey, aLang)) + "\" aria-label=\"" +
+                    HtmlEsc(T(aTitleKey, aLang)) + "\"";
+                oLink.AddRaw(aIcon);
+                oNav.Add(oLink);
+            };
+
+            addRailLink("/", "nav.dashboard", "dashboard", CS_RAIL_DASHBOARD);
+            addRailLink("/products", "nav.products", "products", CS_RAIL_PRODUCTS);
+            addRailLink("/customers", "nav.customers", "customers", CS_RAIL_CUSTOMERS);
+            addRailLink("/invoices", "nav.invoices", "invoices", CS_RAIL_INVOICES);
+            if (string.Equals(aRole, "admin", StringComparison.OrdinalIgnoreCase))
+                addRailLink("/users", "nav.users", "users", CS_RAIL_USERS);
+            addRailLink("/security", "nav.security", "security", CS_RAIL_SECURITY);
+
+            oRoot.Add(oNav);
+            return oRoot.HTML;
+        }
+
+        // Theme switcher dropdown (Light/Dark/System -> POST /theme).
+        private string BuildThemeDropdown(string aTheme, string aLang)
+        {
+            string vCurKey;
+            if (string.Equals(aTheme, "light", StringComparison.OrdinalIgnoreCase))
+                vCurKey = "theme.light";
+            else if (string.Equals(aTheme, "dark", StringComparison.OrdinalIgnoreCase))
+                vCurKey = "theme.dark";
+            else
+                vCurKey = "theme.system";
+
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oLi = new TsgcHTMLContainer("li");
+            oLi.CSSClass = "nav-item dropdown ms-2";
+
+            var oToggle = new TsgcHTMLContainer("a");
+            oToggle.Attributes = "class=\"nav-link dropdown-toggle\" href=\"#\" " +
+                "id=\"merpThemeDropdown\" role=\"button\" data-bs-toggle=\"dropdown\" " +
+                "aria-expanded=\"false\" aria-label=\"Theme: " + T(vCurKey, aLang) + "\"";
+            oToggle.AddText(T(vCurKey, aLang));
+            oLi.Add(oToggle);
+
+            var oUl = new TsgcHTMLContainer("ul");
+            oUl.Attributes = "class=\"dropdown-menu dropdown-menu-end\" " +
+                "aria-labelledby=\"merpThemeDropdown\"";
+
+            Action<string, string> addThemeItem = (aValue, aKey) =>
+            {
+                var oItemLi = new TsgcHTMLContainer("li");
+                var oForm = new TsgcHTMLForm();
+                oForm.Method = "POST";
+                oForm.Action = "/theme";
+                oForm.CSSClass = "m-0";
+                oForm.AddHidden("theme", aValue);
+                var oBtn = new TsgcHTMLContainer("button");
+                oBtn.Attributes = "type=\"submit\" class=\"dropdown-item\"";
+                var oSpan = new TsgcHTMLContainer("span");
+                oSpan.AddText(T(aKey, aLang));
+                oBtn.Add(oSpan);
+                if (string.Equals(aTheme, aValue, StringComparison.OrdinalIgnoreCase))
+                    oBtn.AddRaw(" <span class=\"ms-2\">&#10004;</span>");
+                oForm.Add(oBtn);
+                oItemLi.Add(oForm);
+                oUl.Add(oItemLi);
+            };
+
+            addThemeItem("light", "theme.light");
+            addThemeItem("dark", "theme.dark");
+            addThemeItem("system", "theme.system");
+            oLi.Add(oUl);
+
+            oRoot.Add(oLi);
+            return oRoot.HTML;
+        }
+
+        // Language switcher dropdown (EN/ES/DE/FR/... -> POST /lang).
+        private string BuildLanguageDropdown(string aLang)
+        {
+            string vCur;
+            if (string.Equals(aLang, "es", StringComparison.OrdinalIgnoreCase))
+                vCur = "ES";
+            else if (string.Equals(aLang, "de", StringComparison.OrdinalIgnoreCase))
+                vCur = "DE";
+            else if (string.Equals(aLang, "fr", StringComparison.OrdinalIgnoreCase))
+                vCur = "FR";
+            else if (string.Equals(aLang, "it", StringComparison.OrdinalIgnoreCase))
+                vCur = "IT";
+            else if (string.Equals(aLang, "nl", StringComparison.OrdinalIgnoreCase))
+                vCur = "NL";
+            else if (string.Equals(aLang, "pl", StringComparison.OrdinalIgnoreCase))
+                vCur = "PL";
+            else if (string.Equals(aLang, "br", StringComparison.OrdinalIgnoreCase))
+                vCur = "BR";
+            else if (string.Equals(aLang, "tr", StringComparison.OrdinalIgnoreCase))
+                vCur = "TR";
+            else if (string.Equals(aLang, "zh", StringComparison.OrdinalIgnoreCase))
+                vCur = "ZH";
+            else if (string.Equals(aLang, "ja", StringComparison.OrdinalIgnoreCase))
+                vCur = "JA";
+            else if (string.Equals(aLang, "ko", StringComparison.OrdinalIgnoreCase))
+                vCur = "KO";
+            else
+                vCur = "EN";
+
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oLi = new TsgcHTMLContainer("li");
+            oLi.CSSClass = "nav-item dropdown ms-2";
+
+            var oToggle = new TsgcHTMLContainer("a");
+            oToggle.Attributes = "class=\"nav-link dropdown-toggle\" href=\"#\" " +
+                "id=\"merpLangDropdown\" role=\"button\" data-bs-toggle=\"dropdown\" " +
+                "aria-expanded=\"false\" aria-label=\"" + T("lang.label", aLang) + "\"";
+            oToggle.AddText(vCur);
+            oLi.Add(oToggle);
+
+            var oUl = new TsgcHTMLContainer("ul");
+            oUl.Attributes = "class=\"dropdown-menu dropdown-menu-end\" " +
+                "aria-labelledby=\"merpLangDropdown\"";
+
+            Action<string, string> addLangItem = (aShort, aLabel) =>
+            {
+                var oItemLi = new TsgcHTMLContainer("li");
+                var oForm = new TsgcHTMLForm();
+                oForm.Method = "POST";
+                oForm.Action = "/lang";
+                oForm.CSSClass = "m-0";
+                oForm.AddHidden("lang", aShort);
+                var oBtn = new TsgcHTMLContainer("button");
+                oBtn.Attributes = "type=\"submit\" class=\"dropdown-item\"";
+                var oSpan = new TsgcHTMLContainer("span");
+                oSpan.AddText(aLabel);
+                oBtn.Add(oSpan);
+                if (string.Equals(aLang, aShort, StringComparison.OrdinalIgnoreCase))
+                    oBtn.AddRaw(" <span class=\"ms-2\">&#10004;</span>");
+                oForm.Add(oBtn);
+                oItemLi.Add(oForm);
+                oUl.Add(oItemLi);
+            };
+
+            addLangItem("en", "English");
+            addLangItem("es", "Español");
+            addLangItem("de", "Deutsch");
+            addLangItem("fr", "Français");
+            addLangItem("it", "Italiano");
+            addLangItem("nl", "Nederlands");
+            addLangItem("pl", "Polski");
+            addLangItem("br", "Português");
+            addLangItem("tr", "Türkçe");
+            addLangItem("zh", "中文");
+            addLangItem("ja", "日本語");
+            addLangItem("ko", "한국어");
+            oLi.Add(oUl);
+
+            oRoot.Add(oLi);
+            return oRoot.HTML;
+        }
+
+        // Sticky gradient top bar: brand + a pill search input + the signed-in user
+        // + theme/language switchers + a logout button. The switchers are POST forms
+        // (/theme, /lang); search is a GET form to /products.
+        private string BuildTopBar(string aDisplayName, string aTheme, string aLang)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oBar = new TsgcHTMLContainer("header");
+            oBar.CSSClass = "admin-topbar";
+
+            // Brand (left).
+            var oBrand = new TsgcHTMLContainer("a");
+            oBrand.CSSClass = "topbar-brand";
+            oBrand.Attributes = "href=\"/\" class=\"topbar-brand\"";
+            oBrand.AddText(BrandText(aLang));
+            oBar.Add(oBrand);
+
+            // Pill search input (GET /products?q=...). A plain GET form keeps it
+            // functional everywhere.
+            var oSearchForm = new TsgcHTMLForm();
+            oSearchForm.Method = "GET";
+            oSearchForm.Action = "/products";
+            oSearchForm.CSSClass = "topbar-search m-0";
+            oSearchForm.AddRaw("<input type=\"search\" name=\"q\" placeholder=\"" +
+                HtmlEsc(T("common.search", aLang)) + "\" aria-label=\"" +
+                HtmlEsc(T("common.search", aLang)) + "\">");
+            oBar.Add(oSearchForm);
+
+            // Right cluster: user + theme/lang switchers + logout.
+            var oRightUl = new TsgcHTMLContainer("ul");
+            oRightUl.CSSClass = "navbar-nav ms-auto mb-0 align-items-center flex-row gap-1";
+
+            var oUserLi = new TsgcHTMLContainer("li");
+            oUserLi.CSSClass = "nav-item";
+            var oUserLink = new TsgcHTMLContainer("span");
+            oUserLink.CSSClass = "nav-link topbar-user";
+            oUserLink.AddText(aDisplayName);
+            oUserLi.Add(oUserLink);
+            oRightUl.Add(oUserLi);
+
+            oRightUl.AddRaw(BuildThemeDropdown(aTheme, aLang));
+            oRightUl.AddRaw(BuildLanguageDropdown(aLang));
+
+            var oLogoutLi = new TsgcHTMLContainer("li");
+            oLogoutLi.CSSClass = "nav-item ms-2";
+            var oLogoutForm = new TsgcHTMLForm();
+            oLogoutForm.Method = "POST";
+            oLogoutForm.Action = "/logout";
+            oLogoutForm.CSSClass = "d-flex m-0";
+            var oLogoutBtn = new TsgcHTMLContainer("button");
+            oLogoutBtn.Attributes = "type=\"submit\" class=\"btn btn-outline-light btn-sm\"";
+            oLogoutBtn.AddText(T("nav.logout", aLang));
+            oLogoutForm.Add(oLogoutBtn);
+            oLogoutLi.Add(oLogoutForm);
+            oRightUl.Add(oLogoutLi);
+
+            oBar.Add(oRightUl);
+            oRoot.Add(oBar);
+            return oRoot.HTML;
+        }
+
+        // Page footer: eSeGeCe brand mark + a link to the sgcHTML product page +
+        // a copyright line. Shown on every page (inside the shell) and on login.
+        private string BuildFooter(string aLang)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oFooter = new TsgcHTMLContainer("footer");
+            oFooter.CSSClass = "admin-footer border-top mt-4 py-4 text-center text-muted small";
+
+            // Brand row: eSeGeCe mark + the Admin Console brand.
+            var oInner = new TsgcHTMLContainer("div");
+            oInner.CSSClass =
+                "d-inline-flex align-items-center justify-content-center mb-2 fw-semibold";
+            oInner.AddRaw(CS_ESEGECE_LOGO_SVG);
+            oInner.AddText(BrandText(aLang));
+            oFooter.Add(oInner);
+
+            // "Built with sgcHTML components for Delphi and C++Builder."
+            var oP = new TsgcHTMLContainer("p");
+            oP.CSSClass = "mb-1";
+            oP.AddText(T("footer.builtwith", aLang) + " ");
+            var oLink = new TsgcHTMLLink("https://www.esegece.com/products/sgchtml/", "sgcHTML");
+            oLink.Target = "_blank";
+            oLink.Rel = "noopener";
+            oLink.CSSClass = "fw-semibold text-decoration-none";
+            oP.Add(oLink);
+            oP.AddText(" " + T("footer.suffix", aLang));
+            oFooter.Add(oP);
+
+            // Copyright. The (c) symbol is emitted as the &copy; entity (Raw) so the
+            // source stays ASCII and the UTF-8 response never carries a raw high byte.
+            var oCopy = new TsgcHTMLContainer("p");
+            oCopy.CSSClass = "mb-0";
+            oCopy.AddRaw("&copy; 2026 ");
+            var oEseLink = new TsgcHTMLLink("https://www.esegece.com", "eSeGeCe");
+            oEseLink.Target = "_blank";
+            oEseLink.Rel = "noopener";
+            oEseLink.CSSClass = "text-muted text-decoration-none";
+            oCopy.Add(oEseLink);
+            oFooter.Add(oCopy);
+
+            oRoot.Add(oFooter);
+            return oRoot.HTML;
+        }
+
+        // ---------------------------------------------------------------------
+        // shared shell
+        // ---------------------------------------------------------------------
+
+        // Shared shell: a fixed-left icon rail + a sticky gradient top bar + content.
+        // The left margin (rail width) is applied by the .admin-topbar / .admin-content
+        // theme CSS, so no Bootstrap grid columns are hand-built here.
+        public string BuildPageShell(string aTitle, string aBodyHTML, string aActiveMenu,
+            string aDisplayName, string aRole, string aTheme, string aLang)
+        {
+            var oBody = new TsgcHTMLNodeList();
+
+            // Fixed-left icon rail (position:fixed via CSS).
+            oBody.AddRaw(BuildIconRail(aActiveMenu, aRole, aLang));
+
+            // Everything to the right of the rail: sticky top bar + content + footer.
+            var oMain = new TsgcHTMLContainer("div");
+            oMain.AddRaw(BuildTopBar(aDisplayName, aTheme, aLang));
+
+            var oContent = new TsgcHTMLContainer("main");
+            oContent.CSSClass = "admin-content";
+            oContent.AddRaw(aBodyHTML);
+            oContent.AddRaw(BuildFooter(aLang));
+            oMain.Add(oContent);
+
+            oBody.Add(oMain);
+            string vBody = oBody.HTML;
+            return WrapTemplate(T("app.title", aLang) + " - " + aTitle, vBody, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // login page
+        // ---------------------------------------------------------------------
+
+        // Centered login card with username + password fields and a submit button.
+        // Standalone (no sidebar) but themed + localized + with a small language
+        // switcher. When aError <> '' a danger alert is shown above the form.
+        public string BuildLoginPage(string aTheme, string aLang, string aError = "")
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oContainer = new TsgcHTMLContainer("div");
+            oContainer.CSSClass = "container py-5";
+            var oRow = new TsgcHTMLContainer("div");
+            oRow.CSSClass = "row justify-content-center";
+            var oCol = new TsgcHTMLContainer("div");
+            oCol.CSSClass = "col-md-6 col-lg-4";
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body p-4";
+
+            oCard.Body.Add(new TsgcHTMLRaw("<div class=\"text-center mb-3\" " +
+                "style=\"font-size:2.5rem;line-height:1\">" + CS_ESEGECE_LOGO_SVG +
+                "</div>"));
+            var oHeading = new TsgcHTMLHeading(T("app.title", aLang), 1);
+            oHeading.CSSClass = "card-title h3 mb-4 text-center";
+            oCard.Body.Add(oHeading);
+
+            if (aError != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aError);
+                oAlert.Style = TsgcHTMLAlertStyle.asDanger;
+                oCard.Body.Add(oAlert);
+            }
+
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "post";
+            oForm.Action = "/login";
+
+            var oUser = new TsgcHTMLField(TsgcHTMLInputType.itText, "username");
+            oUser.FieldID = "username";
+            oUser.Label_ = T("login.username", aLang);
+            oUser.Placeholder = T("login.username", aLang);
+            oUser.Autocomplete = "username";
+            oUser.Required = true;
+            oUser.ColClass = "mb-3";
+            oForm.Add(oUser);
+
+            var oPwd = new TsgcHTMLField(TsgcHTMLInputType.itPassword, "password");
+            oPwd.FieldID = "password";
+            oPwd.Label_ = T("login.password", aLang);
+            oPwd.Placeholder = T("login.password", aLang);
+            oPwd.Autocomplete = "current-password";
+            oPwd.Required = true;
+            oPwd.ColClass = "mb-3";
+            oForm.Add(oPwd);
+
+            var oSubmit = new TsgcHTMLButton(T("login.signin", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oSubmit.ButtonType = "submit";
+            oSubmit.CSSClass = "w-100";
+            oForm.Add(oSubmit);
+
+            oCard.Body.Add(oForm);
+
+            // --- Sign in with a passkey --- //
+            oCard.Body.Add(new TsgcHTMLRaw("<hr class=\"my-3\">"));
+
+            var oPasskeyBtn = new TsgcHTMLButton(T("login.passkey", aLang),
+                TsgcHTMLButtonStyle.bsOutlinePrimary);
+            oPasskeyBtn.ButtonType = "button";
+            oPasskeyBtn.CSSClass = "w-100";
+            oPasskeyBtn.Attributes = "id=\"passkey-login-btn\"";
+            oCard.Body.Add(oPasskeyBtn);
+
+            var oPasskeyStatus = new TsgcHTMLContainer("div");
+            oPasskeyStatus.ID = "passkey-status";
+            oPasskeyStatus.CSSClass = "text-muted small mt-2 text-center";
+            oCard.Body.Add(oPasskeyStatus);
+
+            // Small language switcher under the card (standalone login has no navbar).
+            oCard.Body.Add(new TsgcHTMLRaw("<hr class=\"my-3\">"));
+            var oLangRow = new TsgcHTMLContainer("ul");
+            oLangRow.CSSClass = "nav justify-content-center";
+            oLangRow.AddRaw(BuildLanguageDropdown(aLang));
+            oCard.Body.Add(oLangRow);
+
+            // Login-with-passkey JS (full <script> block from a trusted helper).
+            var oScript = new TsgcHTMLScript();
+            oScript.Code = PasskeyLoginScript();
+            oCard.Body.Add(oScript);
+
+            oCol.Add(oCard);
+            oRow.Add(oCol);
+            oContainer.Add(oRow);
+            oRoot.Add(oContainer);
+            oRoot.AddRaw(BuildFooter(aLang));
+
+            string vBody = oRoot.HTML;
+            return WrapTemplate(T("app.title", aLang) + " - " + T("login.title", aLang),
+                vBody, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // dashboard
+        // ---------------------------------------------------------------------
+
+        // Post-login dashboard rendered inside the shared shell: 4 KPI gradient
+        // tiles, a Chart.js revenue line/area chart beside an invoices-by-status
+        // doughnut, a recent-activity table, and a quick-action button row.
+        public string BuildDashboardPage(string aDisplayName, string aRole, string aTheme,
+            string aLang, int[] aCounts, double aRevenue, string aCurrency, int[] aByStatus,
+            TERPRevenueMonth[] aMonths, TERPInvoiceListRow[] aRecent)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            // --- heading + welcome line --- //
+            var oHeading = new TsgcHTMLHeading(T("nav.dashboard", aLang), 1);
+            oHeading.CSSClass = "mb-1";
+            oRoot.Add(oHeading);
+            var oWelcome = new TsgcHTMLParagraph(T("common.welcome", aLang) + ", " +
+                aDisplayName + ". " + T("dashboard.welcome", aLang));
+            oWelcome.CSSClass = "text-muted mb-4";
+            oRoot.Add(oWelcome);
+
+            // --- KPI gradient tiles (4) --- //
+            var oKpiRow = new TsgcHTMLContainer("div");
+            oKpiRow.CSSClass = "row g-3 mb-4";
+
+            // One KPI gradient tile: a big number + an uppercase label on the left,
+            // a tinted SVG glyph on the right, on the indigo->violet gradient
+            // (.kpi-tile). Each tile lives in its own responsive col.
+            Action<string, string, string> addKpiTile = (aLabelKey, aValue, aIcon) =>
+            {
+                var oCol = new TsgcHTMLContainer("div");
+                oCol.CSSClass = "col-6 col-xl-3";
+
+                var oTile = new TsgcHTMLContainer("div");
+                oTile.CSSClass = "kpi-tile";
+                var oFlex = new TsgcHTMLContainer("div");
+                oFlex.CSSClass = "d-flex align-items-center justify-content-between";
+
+                var oText = new TsgcHTMLContainer("div");
+                var oNum = new TsgcHTMLContainer("p");
+                oNum.CSSClass = "kpi-num";
+                oNum.AddText(aValue);
+                oText.Add(oNum);
+                var oLbl = new TsgcHTMLContainer("p");
+                oLbl.CSSClass = "kpi-label";
+                oLbl.AddText(T(aLabelKey, aLang));
+                oText.Add(oLbl);
+                oFlex.Add(oText);
+
+                var oIcon = new TsgcHTMLContainer("div");
+                oIcon.CSSClass = "kpi-icon";
+                oIcon.AddRaw(aIcon);
+                oFlex.Add(oIcon);
+
+                oTile.Add(oFlex);
+                oCol.Add(oTile);
+                oKpiRow.Add(oCol);
+            };
+
+            // aCounts = [customers, products, providers, invoices].
+            addKpiTile("dashboard.kpi.customers",
+                aCounts[0].ToString(CultureInfo.InvariantCulture), CS_ICON_CUSTOMERS);
+            addKpiTile("dashboard.kpi.products",
+                aCounts[1].ToString(CultureInfo.InvariantCulture), CS_ICON_PRODUCTS);
+            addKpiTile("dashboard.kpi.invoices",
+                aCounts[3].ToString(CultureInfo.InvariantCulture), CS_ICON_INVOICES);
+            addKpiTile("dashboard.kpi.revenue", FmtMoney(aRevenue, aCurrency),
+                CS_ICON_REVENUE);
+            oRoot.Add(oKpiRow);
+
+            // --- revenue trend (line/area, 8 cols) + status donut (4 cols) --- //
+            var oSplitRow = new TsgcHTMLContainer("div");
+            oSplitRow.CSSClass = "row g-3 mb-4";
+
+            // Left: a Chart.js line/area chart of revenue per month, inside a card.
+            var oChartCol = new TsgcHTMLContainer("div");
+            oChartCol.CSSClass = "col-12 col-lg-8";
+            var oTrendCard = new TsgcHTMLCard();
+            oTrendCard.CSSClass = "h-100";
+            oTrendCard.BodyClass = "card-body";
+            oTrendCard.Body.Add(new TsgcHTMLHeading(T("dashboard.revenue_trend", aLang), 5));
+            var oTrendChart = new TsgcHTMLComponent_Chart();
+            oTrendChart.ChartID = "dashTrend";
+            oTrendChart.ChartType = TsgcHTMLChartType.ctLine;
+            oTrendChart.CSSHeight = "260";
+            oTrendChart.ShowLegend = false;
+            // Soft grid + axis colours tuned for the dark surface.
+            oTrendChart.CustomOptions =
+                "scales:{x:{ticks:{color:\"#94A3B8\"},grid:{color:\"rgba(148,163,184,.12)\"}}" +
+                ",y:{ticks:{color:\"#94A3B8\"},grid:{color:\"rgba(148,163,184,.12)\"}}}";
+            var vTrendData = new double[aMonths.Length];
+            for (int vI = 0; vI < aMonths.Length; vI++)
+            {
+                oTrendChart.AddLabel(aMonths[vI].MonthLabel);
+                vTrendData[vI] = aMonths[vI].Total;
+            }
+            oTrendChart.AddDataset(T("dashboard.revenue_trend", aLang), vTrendData,
+                "#A855F7", "rgba(124,58,237,.25)", true);
+            oTrendCard.Body.AddRaw(oTrendChart.HTML);
+            oChartCol.Add(oTrendCard);
+            oSplitRow.Add(oChartCol);
+
+            // Right: invoices-by-status doughnut (Chart.js), inside a card. The chart
+            // component emits a single backgroundColor token; the per-slice palette is
+            // applied by patching the dataset JSON so the doughnut shows a distinct
+            // colour per status.
+            var oStatusCol = new TsgcHTMLContainer("div");
+            oStatusCol.CSSClass = "col-12 col-lg-4";
+            var oDonutCard = new TsgcHTMLCard();
+            oDonutCard.CSSClass = "h-100";
+            oDonutCard.BodyClass = "card-body";
+            oDonutCard.Body.Add(new TsgcHTMLHeading(T("dashboard.by_status", aLang), 5));
+            var oDonut = new TsgcHTMLComponent_Chart();
+            oDonut.ChartID = "dashStatus";
+            oDonut.ChartType = TsgcHTMLChartType.ctDoughnut;
+            oDonut.CSSHeight = "260";
+            oDonut.CustomOptions =
+                "plugins:{legend:{position:\"bottom\",labels:{color:\"#94A3B8\"}}}";
+            // aByStatus = [draft, sent, paid, cancelled]. Per-slice colours are set
+            // as a backgroundColor array directly in the dataset JSON.
+            oDonut.AddLabel(T("invoice.status.draft", aLang));
+            oDonut.AddLabel(T("invoice.status.sent", aLang));
+            oDonut.AddLabel(T("invoice.status.paid", aLang));
+            oDonut.AddLabel(T("invoice.status.cancelled", aLang));
+            oDonut.AddDataset("", new double[] { aByStatus[0], aByStatus[1], aByStatus[2],
+                aByStatus[3] }, "#1E293B", "", false);
+            // The component renders backgroundColor as a single quoted string; replace
+            // the empty token with a Chart.js colour array so each slice differs.
+            oDonutCard.Body.AddRaw(oDonut.HTML.Replace("\"backgroundColor\":\"\"",
+                "\"backgroundColor\":[\"#64748B\",\"#6366F1\",\"#10B981\",\"#EF4444\"]"));
+            oStatusCol.Add(oDonutCard);
+            oSplitRow.Add(oStatusCol);
+            oRoot.Add(oSplitRow);
+
+            // --- recent activity (dark striped mini-table) --- //
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "mb-4";
+            oCard.BodyClass = "card-body";
+
+            var oHeaderBar = new TsgcHTMLContainer("div");
+            oHeaderBar.CSSClass = "d-flex justify-content-between align-items-center mb-3";
+            oHeaderBar.Add(new TsgcHTMLHeading(T("dashboard.recent_invoices", aLang), 5));
+            oHeaderBar.AddRaw("<a href=\"/invoices\" class=\"btn btn-sm btn-outline-primary\">" +
+                HtmlEsc(T("dashboard.view_all", aLang)) + "</a>");
+            oCard.Body.Add(oHeaderBar);
+
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm table-striped table-hover align-middle mb-0";
+            oTable.TheadClass = "table-light";
+            oTable.AddColumn(T("invoice.number", aLang));
+            oTable.AddColumn(T("invoice.customer", aLang));
+            oTable.AddColumn(T("invoice.date", aLang));
+            oTable.AddColumn(T("invoice.status", aLang));
+            oTable.AddColumn(T("invoice.total", aLang), "text-end");
+
+            if (aRecent.Length == 0)
+                oTable.AddEmptyRow(T("invoice.none", aLang), 5);
+            else
+                for (int vI = 0; vI < aRecent.Length; vI++)
+                {
+                    var oTr = oTable.AddRow();
+                    oTr.AddCellRaw("<a href=\"/invoices/edit?id=" +
+                        aRecent[vI].Id.ToString(CultureInfo.InvariantCulture) + "\">" +
+                        HtmlEsc(aRecent[vI].Number) + "</a>");
+                    oTr.AddCellText(aRecent[vI].CustomerName);
+                    oTr.AddCellText(FmtDateOnly(aRecent[vI].IssueDate));
+                    oTr.AddCellRaw(InvoiceStatusBadge(aRecent[vI].Status, aLang));
+                    oTr.AddCellRaw(HtmlEsc(FmtMoney(aRecent[vI].Total, aRecent[vI].Currency)),
+                        "text-end fw-semibold");
+                }
+            oCard.Body.Add(oTable);
+            oRoot.Add(oCard);
+
+            // --- quick actions --- //
+            var oQuickCard = new TsgcHTMLCard();
+            oQuickCard.CSSClass = "shadow-sm";
+            oQuickCard.BodyClass = "card-body";
+            oQuickCard.Body.Add(new TsgcHTMLHeading(T("dashboard.quick_actions", aLang), 5));
+            var oQuickRow = new TsgcHTMLContainer("div");
+            oQuickRow.CSSClass = "d-flex flex-wrap mt-2";
+
+            // One quick-action brand button (link styled as a button).
+            Action<string, string, TsgcHTMLButtonStyle> addQuickAction = (aHref, aLabelKey, aStyle) =>
+            {
+                var oBtn = new TsgcHTMLButton(T(aLabelKey, aLang), aStyle);
+                oBtn.Href = aHref;
+                oBtn.CSSClass = "btn-lg me-2 mb-2";
+                oQuickRow.Add(oBtn);
+            };
+
+            addQuickAction("/customers/new", "action.new_customer", TsgcHTMLButtonStyle.bsPrimary);
+            addQuickAction("/products", "action.new_product", TsgcHTMLButtonStyle.bsOutlinePrimary);
+            addQuickAction("/invoices/new", "action.new_invoice", TsgcHTMLButtonStyle.bsWarning);
+            oQuickCard.Body.Add(oQuickRow);
+            oRoot.Add(oQuickCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("nav.dashboard", aLang), vBody, "dashboard",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // coming soon
+        // ---------------------------------------------------------------------
+
+        // "Coming soon" page for protected routes not yet implemented, inside shell.
+        public string BuildComingSoonPage(string aTitle, string aDisplayName, string aRole,
+            string aTheme, string aLang)
+        {
+            // Map the route title to a localized heading + active menu item.
+            string vMenu;
+            string vTitleKey;
+            if (string.Equals(aTitle, "Customers", StringComparison.OrdinalIgnoreCase))
+            {
+                vTitleKey = "nav.customers";
+                vMenu = "customers";
+            }
+            else if (string.Equals(aTitle, "Providers", StringComparison.OrdinalIgnoreCase))
+            {
+                vTitleKey = "nav.providers";
+                vMenu = "providers";
+            }
+            else if (string.Equals(aTitle, "Invoices", StringComparison.OrdinalIgnoreCase))
+            {
+                vTitleKey = "nav.invoices";
+                vMenu = "invoices";
+            }
+            else if (string.Equals(aTitle, "Admin", StringComparison.OrdinalIgnoreCase))
+            {
+                vTitleKey = "nav.admin";
+                vMenu = "admin";
+            }
+            else
+            {
+                vTitleKey = aTitle;
+                vMenu = "";
+            }
+
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(T(vTitleKey, aLang), 1);
+            oHeading.CSSClass = "mb-3";
+            oRoot.Add(oHeading);
+
+            var oPara = new TsgcHTMLParagraph(T("common.coming_soon", aLang));
+            oPara.CSSClass = "lead";
+            oRoot.Add(oPara);
+
+            var oLink = new TsgcHTMLLink("/", T("common.back", aLang));
+            oRoot.Add(oLink);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T(vTitleKey, aLang), vBody, vMenu, aDisplayName,
+                aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // security / passkeys
+        // ---------------------------------------------------------------------
+
+        // Logged-in "Security / Passkeys" page (inside shell): a table of registered
+        // passkeys (with per-row delete form), an "Add a passkey" button + device-
+        // name input, and the register JS.
+        public string BuildSecurityPage(string aDisplayName, string aRole, string aTheme,
+            string aLang, TERPPasskey[] aPasskeys)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(T("security.title", aLang), 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            // --- Registered passkeys table --- //
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm mb-4";
+            oCard.BodyClass = "card-body";
+            oCard.Body.Add(new TsgcHTMLHeading(T("security.your_passkeys", aLang), 5));
+
+            if (aPasskeys.Length == 0)
+                oCard.Body.AddRaw("<p class=\"text-muted mb-0\">" +
+                    HtmlEsc(T("security.none", aLang)) + "</p>");
+            else
+            {
+                var oTable = new TsgcHTMLContainer("table");
+                oTable.CSSClass = "table table-sm align-middle mb-0";
+                oTable.AddRaw("<thead><tr><th>" + HtmlEsc(T("security.device", aLang)) +
+                    "</th><th>" + HtmlEsc(T("security.created", aLang)) + "</th>" + "<th>" +
+                    HtmlEsc(T("security.last_used", aLang)) + "</th><th></th></tr></thead>");
+                var oTbody = new TsgcHTMLContainer("tbody");
+                for (int vI = 0; vI < aPasskeys.Length; vI++)
+                {
+                    // Per-row delete form (POST /security/passkey/delete with the row id).
+                    string vRowHtml = "<tr><td>" + HtmlEsc(aPasskeys[vI].DeviceName) + "</td>" +
+                        "<td>" + HtmlEsc(FmtDate(aPasskeys[vI].CreatedAt)) + "</td>" + "<td>" +
+                        HtmlEsc(FmtDate(aPasskeys[vI].LastUsedAt)) + "</td>" +
+                        "<td class=\"text-end\">" +
+                        "<form method=\"post\" action=\"/security/passkey/delete\" " +
+                        "class=\"d-inline\">" + "<input type=\"hidden\" name=\"id\" value=\"" +
+                        aPasskeys[vI].Id.ToString(CultureInfo.InvariantCulture) + "\">" +
+                        "<button type=\"submit\" class=\"btn btn-sm btn-outline-danger\">" +
+                        HtmlEsc(T("common.delete", aLang)) + "</button></form></td></tr>";
+                    oTbody.AddRaw(vRowHtml);
+                }
+                oTable.Add(oTbody);
+                oCard.Body.Add(oTable);
+            }
+            oRoot.Add(oCard);
+
+            // --- Add a passkey --- //
+            var oAddCard = new TsgcHTMLCard();
+            oAddCard.CSSClass = "shadow-sm mb-4";
+            oAddCard.BodyClass = "card-body";
+            oAddCard.Body.Add(new TsgcHTMLHeading(T("security.add", aLang), 5));
+
+            var oName = new TsgcHTMLField(TsgcHTMLInputType.itText, "device_name");
+            oName.FieldID = "passkey-name";
+            oName.Label_ = T("security.device_name", aLang);
+            oName.Placeholder = T("security.device_name_ph", aLang);
+            oName.ColClass = "mb-3";
+            oAddCard.Body.Add(oName);
+
+            var oAddBtn = new TsgcHTMLButton(T("security.add", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oAddBtn.ButtonType = "button";
+            oAddBtn.Attributes = "id=\"passkey-register-btn\"";
+            oAddCard.Body.Add(oAddBtn);
+
+            var oStatus = new TsgcHTMLContainer("div");
+            oStatus.ID = "passkey-register-status";
+            oStatus.CSSClass = "text-muted small mt-2";
+            oAddCard.Body.Add(oStatus);
+            oRoot.Add(oAddCard);
+
+            var oLink = new TsgcHTMLLink("/", T("common.back", aLang));
+            oRoot.Add(oLink);
+
+            // Register-passkey JS.
+            var oScript = new TsgcHTMLScript();
+            oScript.Code = PasskeyRegisterScript();
+            oRoot.Add(oScript);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("security.title", aLang), vBody, "security",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // customers
+        // ---------------------------------------------------------------------
+
+        // Customers list (inside shell): "New customer" link, a GET search form, and
+        // a table of customers (code/name/email/phone/city + Actions).
+        public string BuildCustomersPage(TERPCustomer[] aRows, string aSearch,
+            string aDisplayName, string aRole, string aTheme, string aLang, string aFlash)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            // Heading + "New customer" button on one flex row.
+            var oHeader = new TsgcHTMLContainer("div");
+            oHeader.CSSClass = "d-flex justify-content-between align-items-center mb-4";
+            var oHeading = new TsgcHTMLHeading(T("customer.title", aLang), 1);
+            oHeading.CSSClass = "mb-0";
+            oHeader.Add(oHeading);
+            var oNewBtn = new TsgcHTMLButton(T("customer.new", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oNewBtn.Href = "/customers/new";
+            oHeader.Add(oNewBtn);
+            oRoot.Add(oHeader);
+
+            // One-shot success alert (e.g. after a save / delete).
+            if (aFlash != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aFlash);
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oAlert.Dismissible = true;
+                oAlert.CSSClass = "mb-4";
+                oRoot.Add(oAlert);
+            }
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            // Search form (GET so the query is shareable / bookmarkable).
+            var oSearchForm = new TsgcHTMLForm();
+            oSearchForm.Method = "GET";
+            oSearchForm.Action = "/customers";
+            oSearchForm.CSSClass = "mb-3";
+            var oSearchRow = new TsgcHTMLContainer("div");
+            oSearchRow.CSSClass = "row g-2";
+            var oSearchCol = new TsgcHTMLContainer("div");
+            oSearchCol.CSSClass = "col";
+            var oSearchInput = new TsgcHTMLField(TsgcHTMLInputType.itText, "q");
+            oSearchInput.FieldID = "customer-search";
+            oSearchInput.Placeholder = T("common.search", aLang);
+            oSearchInput.Value = aSearch;
+            oSearchCol.Add(oSearchInput);
+            oSearchRow.Add(oSearchCol);
+            var oSearchBtnCol = new TsgcHTMLContainer("div");
+            oSearchBtnCol.CSSClass = "col-auto";
+            var oSearchBtn = new TsgcHTMLButton(T("common.search", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oSearchBtn.ButtonType = "submit";
+            oSearchBtnCol.Add(oSearchBtn);
+            oSearchRow.Add(oSearchBtnCol);
+            oSearchForm.Add(oSearchRow);
+            oCard.Body.Add(oSearchForm);
+
+            // Customers table.
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm align-middle mb-0";
+            oTable.AddColumn(T("customer.code", aLang));
+            oTable.AddColumn(T("customer.name", aLang));
+            oTable.AddColumn(T("customer.email", aLang));
+            oTable.AddColumn(T("customer.phone", aLang));
+            oTable.AddColumn(T("customer.city", aLang));
+            oTable.AddColumn(T("common.actions", aLang), "text-end");
+
+            if (aRows.Length == 0)
+                oTable.AddEmptyRow(T("customer.none", aLang), 6);
+            else
+            {
+                string vConfirm = T("common.confirm_delete", aLang);
+                for (int vI = 0; vI < aRows.Length; vI++)
+                {
+                    var oRow = oTable.AddRow();
+                    oRow.AddCellText(aRows[vI].Code);
+                    oRow.AddCellText(aRows[vI].Name);
+                    oRow.AddCellText(aRows[vI].Email);
+                    oRow.AddCellText(aRows[vI].Phone);
+                    oRow.AddCellText(aRows[vI].City);
+                    // Actions: Edit link + per-row delete form (POST, confirm on submit).
+                    var oActions = oRow.AddCell();
+                    oActions.CellClass = "text-end";
+                    oActions.AddRaw("<a href=\"/customers/edit?id=" +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\" class=\"btn btn-sm btn-outline-secondary me-1\">" +
+                        HtmlEsc(T("common.edit", aLang)) + "</a>");
+                    oActions.AddRaw("<form method=\"post\" action=\"/customers/delete\" " +
+                        "class=\"d-inline\" onsubmit=\"return confirm('" +
+                        HtmlEsc(vConfirm).Replace("'", "\\'") +
+                        "');\"><input type=\"hidden\" name=\"id\" value=\"" +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\"><button type=\"submit\" class=\"btn btn-sm btn-outline-danger\">" +
+                        HtmlEsc(T("common.delete", aLang)) + "</button></form>");
+                }
+            }
+
+            oCard.Body.Add(oTable);
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("customer.title", aLang), vBody, "customers",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // Customer add/edit form (inside shell): a card with a POST /customers/save
+        // form laid out in a 2-column grid.
+        public string BuildCustomerFormPage(TERPCustomer aCust, bool aIsNew, string aError,
+            string aDisplayName, string aRole, string aTheme, string aLang)
+        {
+            string vTitle;
+            if (aIsNew)
+                vTitle = T("customer.new", aLang);
+            else
+                vTitle = T("customer.edit", aLang);
+
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(vTitle, 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            if (aError != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aError);
+                oAlert.Style = TsgcHTMLAlertStyle.asDanger;
+                oAlert.CSSClass = "mb-3";
+                oCard.Body.Add(oAlert);
+            }
+
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "POST";
+            oForm.Action = "/customers/save";
+            oForm.AddHidden("id", aCust.Id.ToString(CultureInfo.InvariantCulture));
+
+            // 2-column grid (.row) hosting the scalar fields, each in its own col.
+            var oRowGrid = new TsgcHTMLContainer("div");
+            oRowGrid.CSSClass = "row";
+            oForm.Add(oRowGrid);
+
+            // Append a labeled half-width field to the 2-column grid.
+            Action<string, string, string, TsgcHTMLInputType> addField =
+                (aName, aLabelKey, aValue, aType) =>
+            {
+                var oField = new TsgcHTMLField(aType, aName);
+                oField.FieldID = "customer-" + aName;
+                oField.Label_ = T(aLabelKey, aLang);
+                oField.Value = aValue;
+                oField.ColClass = "col-md-6 mb-3";
+                oRowGrid.Add(oField);
+            };
+
+            addField("code", "customer.code", aCust.Code, TsgcHTMLInputType.itText);
+            addField("name", "customer.name", aCust.Name, TsgcHTMLInputType.itText);
+            addField("tax_id", "customer.tax_id", aCust.TaxID, TsgcHTMLInputType.itText);
+            addField("email", "customer.email", aCust.Email, TsgcHTMLInputType.itEmail);
+            addField("phone", "customer.phone", aCust.Phone, TsgcHTMLInputType.itText);
+            addField("address", "customer.address", aCust.Address, TsgcHTMLInputType.itText);
+            addField("city", "customer.city", aCust.City, TsgcHTMLInputType.itText);
+            addField("country", "customer.country", aCust.Country, TsgcHTMLInputType.itText);
+
+            var oNotes = new TsgcHTMLTextArea("notes");
+            oNotes.FieldID = "customer-notes";
+            oNotes.Label_ = T("customer.notes", aLang);
+            oNotes.Value = aCust.Notes;
+            oNotes.Rows = 3;
+            oNotes.ColClass = "col-12 mb-3";
+            oRowGrid.Add(oNotes);
+
+            // Save + Cancel.
+            var oButtons = new TsgcHTMLContainer("div");
+            oButtons.CSSClass = "d-flex gap-2";
+            var oSave = new TsgcHTMLButton(T("common.save", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oSave.ButtonType = "submit";
+            oButtons.Add(oSave);
+            var oCancel = new TsgcHTMLButton(T("common.cancel", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oCancel.Href = "/customers";
+            oButtons.Add(oCancel);
+            oForm.Add(oButtons);
+
+            oCard.Body.Add(oForm);
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(vTitle, vBody, "customers", aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // users
+        // ---------------------------------------------------------------------
+
+        // Render the role as a coloured Bootstrap badge: admin -> primary (brand),
+        // user (or anything else) -> secondary. Returns an already-escaped span.
+        private static string RoleBadge(string aRole, string aLang)
+        {
+            string vVariant;
+            string vKey;
+            if (string.Equals((aRole ?? string.Empty).Trim(), "admin", StringComparison.OrdinalIgnoreCase))
+            {
+                vVariant = "primary";
+                vKey = "user.role_admin";
+            }
+            else
+            {
+                vVariant = "secondary";
+                vKey = "user.role_user";
+            }
+            return "<span class=\"badge bg-" + vVariant + "\">" + HtmlEsc(T(vKey, aLang)) + "</span>";
+        }
+
+        // Users list (inside shell, admin only).
+        public string BuildUsersPage(TERPUser[] aUsers, long aCurrentUserId,
+            string aDisplayName, string aRole, string aTheme, string aLang, string aFlash)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            // Heading + "New user" button on one flex row.
+            var oHeader = new TsgcHTMLContainer("div");
+            oHeader.CSSClass = "d-flex justify-content-between align-items-center mb-4";
+            var oHeading = new TsgcHTMLHeading(T("user.title", aLang), 1);
+            oHeading.CSSClass = "mb-0";
+            oHeader.Add(oHeading);
+            var oNewBtn = new TsgcHTMLButton(T("user.new", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oNewBtn.Href = "/users/new";
+            oHeader.Add(oNewBtn);
+            oRoot.Add(oHeader);
+
+            // One-shot success alert (e.g. after a save / delete).
+            if (aFlash != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aFlash);
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oAlert.Dismissible = true;
+                oAlert.CSSClass = "mb-4";
+                oRoot.Add(oAlert);
+            }
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            // Users table.
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm align-middle mb-0";
+            oTable.AddColumn(T("user.username", aLang));
+            oTable.AddColumn(T("user.display_name", aLang));
+            oTable.AddColumn(T("user.email", aLang));
+            oTable.AddColumn(T("user.role", aLang));
+            oTable.AddColumn(T("security.created", aLang));
+            oTable.AddColumn(T("common.actions", aLang), "text-end");
+
+            if (aUsers.Length == 0)
+                oTable.AddEmptyRow(T("user.none", aLang), 6);
+            else
+            {
+                string vConfirm = T("common.confirm_delete", aLang);
+                for (int vI = 0; vI < aUsers.Length; vI++)
+                {
+                    var oRow = oTable.AddRow();
+                    // Mark the current user's own row with a "(you)" suffix.
+                    string vName = aUsers[vI].Username;
+                    if (aUsers[vI].Id == aCurrentUserId)
+                        oRow.AddCellRaw(HtmlEsc(vName) +
+                            " <span class=\"text-secondary\">(you)</span>");
+                    else
+                        oRow.AddCellText(vName);
+                    oRow.AddCellText(aUsers[vI].DisplayName);
+                    oRow.AddCellText(aUsers[vI].Email);
+                    oRow.AddCellRaw(RoleBadge(aUsers[vI].Role, aLang));
+                    oRow.AddCellText(FmtDate(aUsers[vI].CreatedAt));
+                    // Actions: Edit link + per-row delete form (POST, confirm on submit).
+                    var oActions = oRow.AddCell();
+                    oActions.CellClass = "text-end";
+                    oActions.AddRaw("<a href=\"/users/edit?id=" +
+                        aUsers[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\" class=\"btn btn-sm btn-outline-secondary me-1\">" +
+                        HtmlEsc(T("common.edit", aLang)) + "</a>");
+                    oActions.AddRaw("<form method=\"post\" action=\"/users/delete\" " +
+                        "class=\"d-inline\" onsubmit=\"return confirm('" +
+                        HtmlEsc(vConfirm).Replace("'", "\\'") +
+                        "');\"><input type=\"hidden\" name=\"id\" value=\"" +
+                        aUsers[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\"><button type=\"submit\" class=\"btn btn-sm btn-outline-danger\">" +
+                        HtmlEsc(T("common.delete", aLang)) + "</button></form>");
+                }
+            }
+
+            oCard.Body.Add(oTable);
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("user.title", aLang), vBody, "users", aDisplayName,
+                aRole, aTheme, aLang);
+        }
+
+        // User add/edit form (inside shell, admin only).
+        public string BuildUserFormPage(TERPUser aUser, bool aIsNew, string aError,
+            string aDisplayName, string aRole, string aTheme, string aLang)
+        {
+            string vTitle;
+            if (aIsNew)
+                vTitle = T("user.new", aLang);
+            else
+                vTitle = T("user.edit", aLang);
+
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(vTitle, 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            if (aError != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aError);
+                oAlert.Style = TsgcHTMLAlertStyle.asDanger;
+                oAlert.CSSClass = "mb-3";
+                oCard.Body.Add(oAlert);
+            }
+
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "POST";
+            oForm.Action = "/users/save";
+            oForm.AddHidden("id", aUser.Id.ToString(CultureInfo.InvariantCulture));
+
+            // 2-column grid (.row) hosting the fields, each in its own col.
+            var oRowGrid = new TsgcHTMLContainer("div");
+            oRowGrid.CSSClass = "row";
+            oForm.Add(oRowGrid);
+
+            var oUsername = new TsgcHTMLField(TsgcHTMLInputType.itText, "username");
+            oUsername.FieldID = "user-username";
+            oUsername.Label_ = T("user.username", aLang);
+            oUsername.Value = aUser.Username;
+            oUsername.Required = true;
+            oUsername.ColClass = "col-md-6 mb-3";
+            oRowGrid.Add(oUsername);
+
+            var oDisplay = new TsgcHTMLField(TsgcHTMLInputType.itText, "display_name");
+            oDisplay.FieldID = "user-display_name";
+            oDisplay.Label_ = T("user.display_name", aLang);
+            oDisplay.Value = aUser.DisplayName;
+            oDisplay.ColClass = "col-md-6 mb-3";
+            oRowGrid.Add(oDisplay);
+
+            var oEmail = new TsgcHTMLField(TsgcHTMLInputType.itEmail, "email");
+            oEmail.FieldID = "user-email";
+            oEmail.Label_ = T("user.email", aLang);
+            oEmail.Value = aUser.Email;
+            oEmail.ColClass = "col-md-6 mb-3";
+            oRowGrid.Add(oEmail);
+
+            var oRoleSel = new TsgcHTMLSelect();
+            oRoleSel.FieldID = "user-role";
+            oRoleSel.Name = "role";
+            oRoleSel.Label_ = T("user.role", aLang);
+            oRoleSel.ColClass = "col-md-6 mb-3";
+            oRoleSel.AddOption("user", T("user.role_user", aLang),
+                !string.Equals(aUser.Role, "admin", StringComparison.OrdinalIgnoreCase));
+            oRoleSel.AddOption("admin", T("user.role_admin", aLang),
+                string.Equals(aUser.Role, "admin", StringComparison.OrdinalIgnoreCase));
+            oRowGrid.Add(oRoleSel);
+
+            var oPwd = new TsgcHTMLField(TsgcHTMLInputType.itPassword, "password");
+            oPwd.FieldID = "user-password";
+            oPwd.Label_ = T("user.password", aLang);
+            oPwd.Autocomplete = "new-password";
+            // Required only when creating a new user; on edit a blank field keeps
+            // the current password.
+            oPwd.Required = aIsNew;
+            if (aIsNew)
+                oPwd.ColClass = "col-md-6 mb-3";
+            else
+                oPwd.ColClass = "col-md-6 mb-1";
+            oRowGrid.Add(oPwd);
+
+            // On edit, add a hint under the password field.
+            if (!aIsNew)
+            {
+                var oHint = new TsgcHTMLFormText(T("user.password_hint", aLang));
+                oHint.ColClass = "col-12 mb-3";
+                oRowGrid.Add(oHint);
+            }
+
+            // Save + Cancel.
+            var oButtons = new TsgcHTMLContainer("div");
+            oButtons.CSSClass = "d-flex gap-2";
+            var oSave = new TsgcHTMLButton(T("common.save", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oSave.ButtonType = "submit";
+            oButtons.Add(oSave);
+            var oCancel = new TsgcHTMLButton(T("common.cancel", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oCancel.Href = "/users";
+            oButtons.Add(oCancel);
+            oForm.Add(oButtons);
+
+            oCard.Body.Add(oForm);
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(vTitle, vBody, "users", aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // providers
+        // ---------------------------------------------------------------------
+
+        // Providers list (inside shell): "New provider" link, a GET search form, and
+        // a table of providers (code/name/email/phone/city + Actions).
+        public string BuildProvidersPage(TERPProvider[] aRows, string aSearch,
+            string aDisplayName, string aRole, string aTheme, string aLang, string aFlash)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            // Heading + "New provider" button on one flex row.
+            var oHeader = new TsgcHTMLContainer("div");
+            oHeader.CSSClass = "d-flex justify-content-between align-items-center mb-4";
+            var oHeading = new TsgcHTMLHeading(T("provider.title", aLang), 1);
+            oHeading.CSSClass = "mb-0";
+            oHeader.Add(oHeading);
+            var oNewBtn = new TsgcHTMLButton(T("provider.new", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oNewBtn.Href = "/providers/new";
+            oHeader.Add(oNewBtn);
+            oRoot.Add(oHeader);
+
+            // One-shot success alert (e.g. after a save / delete).
+            if (aFlash != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aFlash);
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oAlert.Dismissible = true;
+                oAlert.CSSClass = "mb-4";
+                oRoot.Add(oAlert);
+            }
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            // Search form (GET so the query is shareable / bookmarkable).
+            var oSearchForm = new TsgcHTMLForm();
+            oSearchForm.Method = "GET";
+            oSearchForm.Action = "/providers";
+            oSearchForm.CSSClass = "mb-3";
+            var oSearchRow = new TsgcHTMLContainer("div");
+            oSearchRow.CSSClass = "row g-2";
+            var oSearchCol = new TsgcHTMLContainer("div");
+            oSearchCol.CSSClass = "col";
+            var oSearchInput = new TsgcHTMLField(TsgcHTMLInputType.itText, "q");
+            oSearchInput.FieldID = "provider-search";
+            oSearchInput.Placeholder = T("common.search", aLang);
+            oSearchInput.Value = aSearch;
+            oSearchCol.Add(oSearchInput);
+            oSearchRow.Add(oSearchCol);
+            var oSearchBtnCol = new TsgcHTMLContainer("div");
+            oSearchBtnCol.CSSClass = "col-auto";
+            var oSearchBtn = new TsgcHTMLButton(T("common.search", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oSearchBtn.ButtonType = "submit";
+            oSearchBtnCol.Add(oSearchBtn);
+            oSearchRow.Add(oSearchBtnCol);
+            oSearchForm.Add(oSearchRow);
+            oCard.Body.Add(oSearchForm);
+
+            // Providers table.
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm align-middle mb-0";
+            oTable.AddColumn(T("provider.code", aLang));
+            oTable.AddColumn(T("provider.name", aLang));
+            oTable.AddColumn(T("provider.email", aLang));
+            oTable.AddColumn(T("provider.phone", aLang));
+            oTable.AddColumn(T("provider.city", aLang));
+            oTable.AddColumn(T("common.actions", aLang), "text-end");
+
+            if (aRows.Length == 0)
+                oTable.AddEmptyRow(T("provider.none", aLang), 6);
+            else
+            {
+                string vConfirm = T("common.confirm_delete", aLang);
+                for (int vI = 0; vI < aRows.Length; vI++)
+                {
+                    var oRow = oTable.AddRow();
+                    oRow.AddCellText(aRows[vI].Code);
+                    oRow.AddCellText(aRows[vI].Name);
+                    oRow.AddCellText(aRows[vI].Email);
+                    oRow.AddCellText(aRows[vI].Phone);
+                    oRow.AddCellText(aRows[vI].City);
+                    // Actions: Edit link + per-row delete form (POST, confirm on submit).
+                    var oActions = oRow.AddCell();
+                    oActions.CellClass = "text-end";
+                    oActions.AddRaw("<a href=\"/providers/edit?id=" +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\" class=\"btn btn-sm btn-outline-secondary me-1\">" +
+                        HtmlEsc(T("common.edit", aLang)) + "</a>");
+                    oActions.AddRaw("<form method=\"post\" action=\"/providers/delete\" " +
+                        "class=\"d-inline\" onsubmit=\"return confirm('" +
+                        HtmlEsc(vConfirm).Replace("'", "\\'") +
+                        "');\"><input type=\"hidden\" name=\"id\" value=\"" +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\"><button type=\"submit\" class=\"btn btn-sm btn-outline-danger\">" +
+                        HtmlEsc(T("common.delete", aLang)) + "</button></form>");
+                }
+            }
+
+            oCard.Body.Add(oTable);
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("provider.title", aLang), vBody, "providers",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // Provider add/edit form (inside shell): a card with a POST /providers/save
+        // form laid out in a 2-column grid.
+        public string BuildProviderFormPage(TERPProvider aProv, bool aIsNew, string aError,
+            string aDisplayName, string aRole, string aTheme, string aLang)
+        {
+            string vTitle;
+            if (aIsNew)
+                vTitle = T("provider.new", aLang);
+            else
+                vTitle = T("provider.edit", aLang);
+
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(vTitle, 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            if (aError != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aError);
+                oAlert.Style = TsgcHTMLAlertStyle.asDanger;
+                oAlert.CSSClass = "mb-3";
+                oCard.Body.Add(oAlert);
+            }
+
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "POST";
+            oForm.Action = "/providers/save";
+            oForm.AddHidden("id", aProv.Id.ToString(CultureInfo.InvariantCulture));
+
+            // 2-column grid (.row) hosting the scalar fields, each in its own col.
+            var oRowGrid = new TsgcHTMLContainer("div");
+            oRowGrid.CSSClass = "row";
+            oForm.Add(oRowGrid);
+
+            Action<string, string, string, TsgcHTMLInputType> addField =
+                (aName, aLabelKey, aValue, aType) =>
+            {
+                var oField = new TsgcHTMLField(aType, aName);
+                oField.FieldID = "provider-" + aName;
+                oField.Label_ = T(aLabelKey, aLang);
+                oField.Value = aValue;
+                oField.ColClass = "col-md-6 mb-3";
+                oRowGrid.Add(oField);
+            };
+
+            addField("code", "provider.code", aProv.Code, TsgcHTMLInputType.itText);
+            addField("name", "provider.name", aProv.Name, TsgcHTMLInputType.itText);
+            addField("tax_id", "provider.tax_id", aProv.TaxID, TsgcHTMLInputType.itText);
+            addField("email", "provider.email", aProv.Email, TsgcHTMLInputType.itEmail);
+            addField("phone", "provider.phone", aProv.Phone, TsgcHTMLInputType.itText);
+            addField("address", "provider.address", aProv.Address, TsgcHTMLInputType.itText);
+            addField("city", "provider.city", aProv.City, TsgcHTMLInputType.itText);
+            addField("country", "provider.country", aProv.Country, TsgcHTMLInputType.itText);
+
+            var oNotes = new TsgcHTMLTextArea("notes");
+            oNotes.FieldID = "provider-notes";
+            oNotes.Label_ = T("provider.notes", aLang);
+            oNotes.Value = aProv.Notes;
+            oNotes.Rows = 3;
+            oNotes.ColClass = "col-12 mb-3";
+            oRowGrid.Add(oNotes);
+
+            // Save + Cancel.
+            var oButtons = new TsgcHTMLContainer("div");
+            oButtons.CSSClass = "d-flex gap-2";
+            var oSave = new TsgcHTMLButton(T("common.save", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oSave.ButtonType = "submit";
+            oButtons.Add(oSave);
+            var oCancel = new TsgcHTMLButton(T("common.cancel", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oCancel.Href = "/providers";
+            oButtons.Add(oCancel);
+            oForm.Add(oButtons);
+
+            oCard.Body.Add(oForm);
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(vTitle, vBody, "providers", aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // products
+        // ---------------------------------------------------------------------
+
+        // htmx FRAGMENT: just the products <table> (no shell, no template). Each row
+        // Actions cell carries an Edit button (hx-get the form into #product-form-
+        // panel) and a Delete button (hx-post /products/delete, refreshes the table).
+        public string BuildProductsTableFragment(TERPProduct[] aRows, string aLang)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm align-middle mb-0";
+            oTable.Responsive = false;
+            oTable.AddColumn(T("product.code", aLang));
+            oTable.AddColumn(T("product.name", aLang));
+            oTable.AddColumn(T("product.unit", aLang));
+            oTable.AddColumn(T("product.price", aLang), "text-end");
+            oTable.AddColumn(T("common.actions", aLang), "text-end");
+
+            if (aRows.Length == 0)
+                oTable.AddEmptyRow(T("product.none", aLang), 5);
+            else
+            {
+                string vConfirm = HtmlEsc(T("common.confirm_delete", aLang)).Replace("\"", "&quot;");
+                for (int vI = 0; vI < aRows.Length; vI++)
+                {
+                    var oRow = oTable.AddRow();
+                    oRow.AddCellText(aRows[vI].Code);
+                    oRow.AddCellText(aRows[vI].Name);
+                    oRow.AddCellText(aRows[vI].Unit_);
+                    oRow.AddCellText(FmtNum2(aRows[vI].Price), "text-end");
+                    // Actions: htmx Edit (loads the form into the panel) + htmx Delete
+                    // (posts the delete and re-renders the table in place).
+                    var oActions = oRow.AddCell();
+                    oActions.CellClass = "text-end";
+                    var oEdit = new TsgcHTMLButton(T("common.edit", aLang),
+                        TsgcHTMLButtonStyle.bsOutlineSecondary);
+                    oEdit.ButtonType = "button";
+                    oEdit.Attributes = "hx-get=\"/products/form?id=" +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\" hx-target=\"#product-form-panel\" hx-swap=\"innerHTML\"";
+                    oEdit.CSSClass = "me-1";
+                    oActions.Add(oEdit);
+                    var oDel = new TsgcHTMLButton(T("common.delete", aLang),
+                        TsgcHTMLButtonStyle.bsOutlineDanger);
+                    oDel.ButtonType = "button";
+                    oDel.Attributes = "hx-post=\"/products/delete\" hx-vals='{\"id\": " +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "}' hx-target=\"#products-table\" hx-swap=\"innerHTML\" hx-confirm=\"" +
+                        vConfirm + "\"";
+                    oActions.Add(oDel);
+                }
+            }
+
+            oRoot.Add(oTable);
+            return oRoot.HTML;
+        }
+
+        // htmx FRAGMENT: just the add/edit product form card (no shell). hx-posts to
+        // /products/save and swaps the refreshed table into #products-table; the
+        // Cancel button clears the panel via htmx.
+        public string BuildProductFormFragment(TERPProduct aProd, bool aIsNew,
+            string aError, string aLang)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm mb-4";
+            oCard.BodyClass = "card-body";
+
+            TsgcHTMLHeading oHeading;
+            if (aIsNew)
+                oHeading = new TsgcHTMLHeading(T("product.new", aLang), 5);
+            else
+                oHeading = new TsgcHTMLHeading(T("product.edit", aLang), 5);
+            oHeading.CSSClass = "mb-3";
+            oCard.Body.Add(oHeading);
+
+            if (aError != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aError);
+                oAlert.Style = TsgcHTMLAlertStyle.asDanger;
+                oAlert.CSSClass = "mb-3";
+                oCard.Body.Add(oAlert);
+            }
+
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "POST";
+            oForm.Action = "/products/save";
+            oForm.Attributes =
+                "hx-post=\"/products/save\" hx-target=\"#products-table\" hx-swap=\"innerHTML\"";
+            oForm.AddHidden("id", aProd.Id.ToString(CultureInfo.InvariantCulture));
+
+            // 2-column grid (.row) hosting the scalar fields, each in its own col.
+            var oRowGrid = new TsgcHTMLContainer("div");
+            oRowGrid.CSSClass = "row";
+            oForm.Add(oRowGrid);
+
+            Action<string, string, string, TsgcHTMLInputType> addField =
+                (aName, aLabelKey, aValue, aType) =>
+            {
+                var oField = new TsgcHTMLField(aType, aName);
+                oField.FieldID = "product-" + aName;
+                oField.Label_ = T(aLabelKey, aLang);
+                oField.Value = aValue;
+                oField.ColClass = "col-md-6 mb-3";
+                oRowGrid.Add(oField);
+            };
+
+            addField("code", "product.code", aProd.Code, TsgcHTMLInputType.itText);
+            addField("name", "product.name", aProd.Name, TsgcHTMLInputType.itText);
+            addField("unit", "product.unit", aProd.Unit_, TsgcHTMLInputType.itText);
+            addField("price", "product.price", FmtNum2(aProd.Price), TsgcHTMLInputType.itNumber);
+            addField("tax_rate", "product.tax_rate", FmtNum2(aProd.TaxRate), TsgcHTMLInputType.itNumber);
+
+            var oDesc = new TsgcHTMLTextArea("description");
+            oDesc.FieldID = "product-description";
+            oDesc.Label_ = T("product.description", aLang);
+            oDesc.Value = aProd.Description;
+            oDesc.Rows = 3;
+            oDesc.ColClass = "col-12 mb-3";
+            oRowGrid.Add(oDesc);
+
+            // Save (submit) + Cancel (clears the panel via htmx).
+            var oButtons = new TsgcHTMLContainer("div");
+            oButtons.CSSClass = "d-flex gap-2";
+            var oSave = new TsgcHTMLButton(T("common.save", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oSave.ButtonType = "submit";
+            oButtons.Add(oSave);
+            var oCancel = new TsgcHTMLButton(T("common.cancel", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oCancel.ButtonType = "button";
+            oCancel.Attributes =
+                "hx-get=\"/products/form?cancel=1\" hx-target=\"#product-form-panel\" hx-swap=\"innerHTML\"";
+            oButtons.Add(oCancel);
+            oForm.Add(oButtons);
+
+            oCard.Body.Add(oForm);
+            oRoot.Add(oCard);
+
+            return oRoot.HTML;
+        }
+
+        // Products list (inside shell, htmx flow): heading + an "Add product" button
+        // that swaps the empty form into the inline #product-form-panel, a search-as-
+        // you-type input that swaps the table fragment into #products-table, and the
+        // initial table fragment. No full-page navigation: add/edit/delete are htmx.
+        public string BuildProductsPage(TERPProduct[] aRows, string aSearch,
+            string aDisplayName, string aRole, string aTheme, string aLang, string aFlash)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+
+            // Heading + htmx "Add product" button on one flex row. The button loads
+            // the empty form into the inline panel below (no full-page navigation).
+            var oHeader = new TsgcHTMLContainer("div");
+            oHeader.CSSClass = "d-flex justify-content-between align-items-center mb-4";
+            var oHeading = new TsgcHTMLHeading(T("product.title", aLang), 1);
+            oHeading.CSSClass = "mb-0";
+            oHeader.Add(oHeading);
+            var oAddBtn = new TsgcHTMLButton(T("product.add", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oAddBtn.ButtonType = "button";
+            oAddBtn.Attributes =
+                "hx-get=\"/products/form\" hx-target=\"#product-form-panel\" hx-swap=\"innerHTML\"";
+            oHeader.Add(oAddBtn);
+            oRoot.Add(oHeader);
+
+            // One-shot success alert (e.g. after a save / delete).
+            if (aFlash != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aFlash);
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oAlert.Dismissible = true;
+                oAlert.CSSClass = "mb-4";
+                oRoot.Add(oAlert);
+            }
+
+            // Inline panel: the add/edit form fragment gets swapped in here by htmx.
+            var oPanel = new TsgcHTMLContainer("div");
+            oPanel.ID = "product-form-panel";
+            oRoot.Add(oPanel);
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            // Search-as-you-type input (not in a submitting form). htmx GETs
+            // /products/search?q=<value> and swaps the result into #products-table.
+            // Emitted as raw markup because the htmx attributes (hx-get / hx-trigger /
+            // hx-target / hx-swap) must be carried directly on the <input>.
+            oCard.Body.AddRaw("<input type=\"text\" name=\"q\" id=\"product-search\" " +
+                "class=\"form-control mb-3\" placeholder=\"" +
+                HtmlEsc(T("product.search_placeholder", aLang)) + "\" value=\"" +
+                HtmlEsc(aSearch) + "\" hx-get=\"/products/search\" " +
+                "hx-trigger=\"keyup changed delay:300ms, search\" " +
+                "hx-target=\"#products-table\" hx-swap=\"innerHTML\">");
+
+            // The live table region. Initial content is the table fragment.
+            var oTableWrap = new TsgcHTMLContainer("div");
+            oTableWrap.ID = "products-table";
+            oTableWrap.AddRaw(BuildProductsTableFragment(aRows, aLang));
+            oCard.Body.Add(oTableWrap);
+
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("product.title", aLang), vBody, "products",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // invoices
+        // ---------------------------------------------------------------------
+
+        // Map an invoice status to a Bootstrap badge variant + localized label.
+        private static string InvoiceStatusBadge(string aStatus, string aLang)
+        {
+            string vStatus = (aStatus ?? string.Empty).Trim().ToLowerInvariant();
+            string vVariant;
+            string vKey;
+            if (vStatus == "sent")
+            {
+                vVariant = "info";
+                vKey = "invoice.status.sent";
+            }
+            else if (vStatus == "paid")
+            {
+                vVariant = "success";
+                vKey = "invoice.status.paid";
+            }
+            else if (vStatus == "cancelled")
+            {
+                vVariant = "danger";
+                vKey = "invoice.status.cancelled";
+            }
+            else
+            {
+                vVariant = "secondary";
+                vKey = "invoice.status.draft";
+            }
+            return "<span class=\"badge bg-" + vVariant + "\">" + HtmlEsc(T(vKey, aLang)) + "</span>";
+        }
+
+        // Invoices list (inside shell): "New invoice" link, a GET filter form
+        // (search text + a status select), and a table of invoices.
+        public string BuildInvoicesPage(TERPInvoiceListRow[] aRows, string aSearch,
+            string aStatus, string aDisplayName, string aRole, string aTheme, string aLang,
+            string aFlash)
+        {
+            string vStatus = (aStatus ?? string.Empty).Trim().ToLowerInvariant();
+            var oRoot = new TsgcHTMLNodeList();
+
+            // Heading + "New invoice" button on one flex row.
+            var oHeader = new TsgcHTMLContainer("div");
+            oHeader.CSSClass = "d-flex justify-content-between align-items-center mb-4";
+            var oHeading = new TsgcHTMLHeading(T("invoice.title", aLang), 1);
+            oHeading.CSSClass = "mb-0";
+            oHeader.Add(oHeading);
+            var oNewBtn = new TsgcHTMLButton(T("invoice.new", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oNewBtn.Href = "/invoices/new";
+            oHeader.Add(oNewBtn);
+            oRoot.Add(oHeader);
+
+            // One-shot success alert (e.g. after a save / delete).
+            if (aFlash != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aFlash);
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oAlert.Dismissible = true;
+                oAlert.CSSClass = "mb-4";
+                oRoot.Add(oAlert);
+            }
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            // Filter form (GET): search text + status select.
+            var oFilterForm = new TsgcHTMLForm();
+            oFilterForm.Method = "GET";
+            oFilterForm.Action = "/invoices";
+            oFilterForm.CSSClass = "mb-3";
+            var oFilterRow = new TsgcHTMLContainer("div");
+            oFilterRow.CSSClass = "row g-2 align-items-end";
+
+            var oSearchCol = new TsgcHTMLContainer("div");
+            oSearchCol.CSSClass = "col";
+            var oSearchInput = new TsgcHTMLField(TsgcHTMLInputType.itText, "q");
+            oSearchInput.FieldID = "invoice-search";
+            oSearchInput.Placeholder = T("common.search", aLang);
+            oSearchInput.Value = aSearch;
+            oSearchCol.Add(oSearchInput);
+            oFilterRow.Add(oSearchCol);
+
+            var oStatusCol = new TsgcHTMLContainer("div");
+            oStatusCol.CSSClass = "col-auto";
+            var oStatusSel = new TsgcHTMLSelect();
+            oStatusSel.FieldID = "invoice-status-filter";
+            oStatusSel.Name = "status";
+
+            Action<string, string> addStatusOption = (aValue, aKey) =>
+            {
+                oStatusSel.AddOption(aValue, T(aKey, aLang),
+                    string.Equals(vStatus, aValue, StringComparison.OrdinalIgnoreCase) ||
+                    ((vStatus == "") && (aValue == "all")));
+            };
+
+            addStatusOption("all", "invoice.status.all");
+            addStatusOption("draft", "invoice.status.draft");
+            addStatusOption("sent", "invoice.status.sent");
+            addStatusOption("paid", "invoice.status.paid");
+            addStatusOption("cancelled", "invoice.status.cancelled");
+            oStatusCol.Add(oStatusSel);
+            oFilterRow.Add(oStatusCol);
+
+            var oBtnCol = new TsgcHTMLContainer("div");
+            oBtnCol.CSSClass = "col-auto";
+            var oFilterBtn = new TsgcHTMLButton(T("common.search", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oFilterBtn.ButtonType = "submit";
+            oBtnCol.Add(oFilterBtn);
+            oFilterRow.Add(oBtnCol);
+
+            oFilterForm.Add(oFilterRow);
+            oCard.Body.Add(oFilterForm);
+
+            // Invoices table.
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm align-middle mb-0";
+            oTable.AddColumn(T("invoice.number", aLang));
+            oTable.AddColumn(T("invoice.customer", aLang));
+            oTable.AddColumn(T("invoice.issue_date", aLang));
+            oTable.AddColumn(T("invoice.due_date", aLang));
+            oTable.AddColumn(T("invoice.status", aLang));
+            oTable.AddColumn(T("invoice.total", aLang), "text-end");
+            oTable.AddColumn(T("common.actions", aLang), "text-end");
+
+            if (aRows.Length == 0)
+                oTable.AddEmptyRow(T("invoice.none", aLang), 7);
+            else
+            {
+                string vConfirm = T("common.confirm_delete", aLang);
+                for (int vI = 0; vI < aRows.Length; vI++)
+                {
+                    var oRow = oTable.AddRow();
+                    oRow.AddCellText(aRows[vI].Number);
+                    oRow.AddCellText(aRows[vI].CustomerName);
+                    oRow.AddCellText(FmtDateOnly(aRows[vI].IssueDate));
+                    oRow.AddCellText(FmtDateOnly(aRows[vI].DueDate));
+                    oRow.AddCellRaw(InvoiceStatusBadge(aRows[vI].Status, aLang));
+                    oRow.AddCellText(FmtMoney(aRows[vI].Total, aRows[vI].Currency), "text-end");
+                    // Actions: Edit link + per-row delete form (POST, confirm on submit).
+                    var oActions = oRow.AddCell();
+                    oActions.CellClass = "text-end";
+                    oActions.AddRaw("<a href=\"/invoices/edit?id=" +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\" class=\"btn btn-sm btn-outline-secondary me-1\">" +
+                        HtmlEsc(T("common.edit", aLang)) + "</a>");
+                    oActions.AddRaw("<form method=\"post\" action=\"/invoices/delete\" " +
+                        "class=\"d-inline\" onsubmit=\"return confirm('" +
+                        HtmlEsc(vConfirm).Replace("'", "\\'") +
+                        "');\"><input type=\"hidden\" name=\"id\" value=\"" +
+                        aRows[vI].Id.ToString(CultureInfo.InvariantCulture) +
+                        "\"><button type=\"submit\" class=\"btn btn-sm btn-outline-danger\">" +
+                        HtmlEsc(T("common.delete", aLang)) + "</button></form>");
+                }
+            }
+
+            oCard.Body.Add(oTable);
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("invoice.title", aLang), vBody, "invoices",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // Inline JS for the invoice form: clone a hidden <tr> template to add line
+        // rows, remove rows, and recompute each line total + subtotal/tax/total.
+        // Assigned to TsgcHTMLScript.Code (no <script> wrapper here).
+        private static string InvoiceFormScript()
+        {
+            return "(function(){" + "function num(v){var n=parseFloat(v);" +
+                "return isNaN(n)?0:n;}" + "function fmt(n){return n.toFixed(2);}" +
+                "var tbody=document.getElementById('merp-lines');" +
+                "var tmpl=document.getElementById('merp-line-tmpl');" +
+                "var rateEl=document.getElementById('invoice-tax_rate');" +
+                "var subEl=document.getElementById('merp-subtotal');" +
+                "var taxEl=document.getElementById('merp-tax');" +
+                "var totEl=document.getElementById('merp-total');" +
+                "function recalc(){var sub=0;" + "var rows=tbody.querySelectorAll('tr');" +
+                "for(var i=0;i<rows.length;i++){" +
+                "var q=rows[i].querySelector('.merp-qty');" +
+                "var p=rows[i].querySelector('.merp-price');" +
+                "var lt=rows[i].querySelector('.merp-ltotal');" + "if(!q||!p)continue;" +
+                "var line=num(q.value)*num(p.value);" + "if(lt)lt.value=fmt(line);" +
+                "sub+=line;}" + "var rate=rateEl?num(rateEl.value):0;" +
+                "var tax=sub*rate/100;" + "if(subEl)subEl.value=fmt(sub);" +
+                "if(taxEl)taxEl.value=fmt(tax);" + "if(totEl)totEl.value=fmt(sub+tax);}" +
+                "function onProduct(sel,row){" + "var opt=sel.options[sel.selectedIndex];" +
+                "if(!opt)return;" + "if(opt.value&&opt.value!==\"0\"){" +
+                "var d=row.querySelector('.merp-desc');" +
+                "var p=row.querySelector('.merp-price');" +
+                "if(d)d.value=opt.getAttribute('data-desc')||'';" +
+                "if(p)p.value=opt.getAttribute('data-price')||'';}" + "recalc();}" +
+                "function wire(row){" +
+                "var ins=row.querySelectorAll('.merp-qty,.merp-price');" +
+                "for(var i=0;i<ins.length;i++){ins[i].addEventListener('input',recalc);}" +
+                "var sel=row.querySelector('.merp-product');" +
+                "if(sel){sel.addEventListener('change',function(){onProduct(sel,row);});}" +
+                "var rm=row.querySelector('.merp-remove');" +
+                "if(rm){rm.addEventListener('click',function(){" +
+                "row.parentNode.removeChild(row);recalc();});}}" +
+                "function addRow(){var html=tmpl.innerHTML;" +
+                "var wrap=document.createElement('tbody');" +
+                "wrap.innerHTML=html.trim();" + "var row=wrap.firstChild;" +
+                "tbody.appendChild(row);wire(row);return row;}" +
+                "var addBtn=document.getElementById('merp-add-line');" +
+                "if(addBtn){addBtn.addEventListener('click',function(){addRow();});}" +
+                "if(rateEl){rateEl.addEventListener('input',recalc);}" +
+                "var existing=tbody.querySelectorAll('tr');" +
+                "for(var i=0;i<existing.length;i++){wire(existing[i]);}" +
+                "if(existing.length===0){addRow();}" + "recalc();" + "})();";
+        }
+
+        // Invoice add/edit form (inside shell): header fields + an editable line-
+        // items table driven by inline JS that recomputes line totals live.
+        public string BuildInvoiceFormPage(TERPInvoice aInv, TERPInvoiceLine[] aLines,
+            TERPCustomer[] aCustomers, TERPProduct[] aProducts, bool aIsNew, string aError,
+            string aDisplayName, string aRole, string aTheme, string aLang)
+        {
+            string vTitle;
+            if (aIsNew)
+                vTitle = T("invoice.new", aLang);
+            else
+                vTitle = T("invoice.edit", aLang);
+
+            string vCurrency = (aInv.Currency ?? string.Empty).Trim();
+            if (vCurrency == "")
+                vCurrency = "EUR";
+            string vStatus = (aInv.Status ?? string.Empty).Trim().ToLowerInvariant();
+            if (vStatus == "")
+                vStatus = "draft";
+
+            // The <option> list for a line product select.
+            Func<long, string> productOptions = (aSelected) =>
+            {
+                string vSel;
+                if (aSelected <= 0)
+                    vSel = " selected";
+                else
+                    vSel = "";
+                string vResult = "<option value=\"0\"" + vSel + ">" +
+                    HtmlEsc(T("invoice.line.product_none", aLang)) + "</option>";
+                for (int vJ = 0; vJ < aProducts.Length; vJ++)
+                {
+                    if (aProducts[vJ].Id == aSelected)
+                        vSel = " selected";
+                    else
+                        vSel = "";
+                    vResult = vResult + "<option value=\"" +
+                        aProducts[vJ].Id.ToString(CultureInfo.InvariantCulture) + "\"" +
+                        vSel + " data-desc=\"" + HtmlEsc(aProducts[vJ].Name) + "\" data-price=\"" +
+                        HtmlEsc(FmtNum2(aProducts[vJ].Price)) + "\">" +
+                        HtmlEsc(aProducts[vJ].Name) + "</option>";
+                }
+                return vResult;
+            };
+
+            // Build one editable <tr> for the lines table.
+            Func<long, string, string, string, string, string> lineRowHtml =
+                (aProductId, aDesc, aQty, aPrice, aLineTotal) =>
+            {
+                return "<tr>" +
+                    "<td style=\"min-width:11rem;\"><select name=\"line_product\" " +
+                    "class=\"form-select form-select-sm merp-product\">" +
+                    productOptions(aProductId) + "</select></td>" +
+                    "<td><input type=\"text\" name=\"line_desc\" " +
+                    "class=\"form-control form-control-sm merp-desc\" value=\"" + HtmlEsc(aDesc) +
+                    "\"></td>" +
+                    "<td style=\"max-width:7rem;\"><input type=\"number\" step=\"any\" " +
+                    "name=\"line_qty\" class=\"form-control form-control-sm merp-qty\" value=\"" +
+                    HtmlEsc(aQty) + "\"></td>" +
+                    "<td style=\"max-width:9rem;\"><input type=\"number\" step=\"any\" " +
+                    "name=\"line_price\" class=\"form-control form-control-sm merp-price\" " +
+                    "value=\"" + HtmlEsc(aPrice) + "\"></td>" +
+                    "<td style=\"max-width:9rem;\"><input type=\"text\" readonly " +
+                    "class=\"form-control form-control-sm merp-ltotal\" value=\"" +
+                    HtmlEsc(aLineTotal) + "\"></td>" + "<td class=\"text-end\">" +
+                    "<button type=\"button\" " +
+                    "class=\"btn btn-sm btn-outline-danger merp-remove\">" +
+                    HtmlEsc(T("invoice.remove", aLang)) + "</button></td>" + "</tr>";
+            };
+
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(vTitle, 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            if (aError != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aError);
+                oAlert.Style = TsgcHTMLAlertStyle.asDanger;
+                oAlert.CSSClass = "mb-3";
+                oCard.Body.Add(oAlert);
+            }
+
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "POST";
+            oForm.Action = "/invoices/save";
+            oForm.AddHidden("id", aInv.Id.ToString(CultureInfo.InvariantCulture));
+
+            // ---- header fields (2-column grid) ----
+            var oRowGrid = new TsgcHTMLContainer("div");
+            oRowGrid.CSSClass = "row";
+            oForm.Add(oRowGrid);
+
+            var oNumber = new TsgcHTMLField(TsgcHTMLInputType.itText, "number");
+            oNumber.FieldID = "invoice-number";
+            oNumber.Label_ = T("invoice.number", aLang);
+            oNumber.Value = aInv.Number;
+            oNumber.ColClass = "col-md-6 mb-3";
+            oRowGrid.Add(oNumber);
+
+            var oCustomer = new TsgcHTMLSelect();
+            oCustomer.FieldID = "invoice-customer";
+            oCustomer.Name = "customer_id";
+            oCustomer.Label_ = T("invoice.customer", aLang);
+            oCustomer.ColClass = "col-md-6 mb-3";
+            oCustomer.AddOption("", T("invoice.customer_none", aLang), aInv.CustomerId <= 0);
+            for (int vI = 0; vI < aCustomers.Length; vI++)
+                oCustomer.AddOption(aCustomers[vI].Id.ToString(CultureInfo.InvariantCulture),
+                    aCustomers[vI].Name, aCustomers[vI].Id == aInv.CustomerId);
+            oRowGrid.Add(oCustomer);
+
+            var oIssue = new TsgcHTMLField(TsgcHTMLInputType.itDate, "issue_date");
+            oIssue.FieldID = "invoice-issue_date";
+            oIssue.Label_ = T("invoice.issue_date", aLang);
+            oIssue.Value = FmtDateInput(aInv.IssueDate);
+            oIssue.ColClass = "col-md-3 mb-3";
+            oRowGrid.Add(oIssue);
+
+            var oDue = new TsgcHTMLField(TsgcHTMLInputType.itDate, "due_date");
+            oDue.FieldID = "invoice-due_date";
+            oDue.Label_ = T("invoice.due_date", aLang);
+            oDue.Value = FmtDateInput(aInv.DueDate);
+            oDue.ColClass = "col-md-3 mb-3";
+            oRowGrid.Add(oDue);
+
+            var oStatus = new TsgcHTMLSelect();
+            oStatus.FieldID = "invoice-status";
+            oStatus.Name = "status";
+            oStatus.Label_ = T("invoice.status", aLang);
+            oStatus.ColClass = "col-md-3 mb-3";
+            oStatus.AddOption("draft", T("invoice.status.draft", aLang), vStatus == "draft");
+            oStatus.AddOption("sent", T("invoice.status.sent", aLang), vStatus == "sent");
+            oStatus.AddOption("paid", T("invoice.status.paid", aLang), vStatus == "paid");
+            oStatus.AddOption("cancelled", T("invoice.status.cancelled", aLang),
+                vStatus == "cancelled");
+            oRowGrid.Add(oStatus);
+
+            var oCurrency = new TsgcHTMLField(TsgcHTMLInputType.itText, "currency");
+            oCurrency.FieldID = "invoice-currency";
+            oCurrency.Label_ = T("invoice.currency", aLang);
+            oCurrency.Value = vCurrency;
+            oCurrency.ColClass = "col-md-3 mb-3";
+            oRowGrid.Add(oCurrency);
+
+            var oTaxRate = new TsgcHTMLField(TsgcHTMLInputType.itNumber, "tax_rate");
+            oTaxRate.FieldID = "invoice-tax_rate";
+            oTaxRate.Label_ = T("invoice.tax_rate", aLang);
+            oTaxRate.Value = FmtNum2(aInv.TaxRate);
+            oTaxRate.ColClass = "col-md-3 mb-3";
+            oRowGrid.Add(oTaxRate);
+
+            // ---- line items section ----
+            var oLinesHeading = new TsgcHTMLHeading(T("invoice.line.description", aLang), 5);
+            oLinesHeading.CSSClass = "mt-2 mb-2";
+            // Use a generic section heading instead of the column label.
+            oLinesHeading.Text = T("nav.invoices", aLang);
+            oForm.Add(oLinesHeading);
+
+            // Editable lines table (header + the dynamic tbody #merp-lines).
+            string vTableHtml = "<div class=\"table-responsive\">" +
+                "<table class=\"table table-sm align-middle\">" + "<thead><tr><th>" +
+                HtmlEsc(T("invoice.line.product", aLang)) + "</th><th>" +
+                HtmlEsc(T("invoice.line.description", aLang)) + "</th><th>" +
+                HtmlEsc(T("invoice.line.qty", aLang)) + "</th><th>" +
+                HtmlEsc(T("invoice.line.price", aLang)) + "</th><th>" +
+                HtmlEsc(T("invoice.line.total", aLang)) + "</th><th></th></tr></thead>" +
+                "<tbody id=\"merp-lines\">";
+            for (int vI = 0; vI < aLines.Length; vI++)
+                vTableHtml = vTableHtml + lineRowHtml(aLines[vI].ProductId,
+                    aLines[vI].Description, FmtNum2(aLines[vI].Quantity),
+                    FmtNum2(aLines[vI].UnitPrice), FmtNum2(aLines[vI].LineTotal));
+            vTableHtml = vTableHtml + "</tbody></table></div>";
+            oForm.AddRaw(vTableHtml);
+
+            // Hidden row template used by the JS to clone new blank lines.
+            string vRowHtml = lineRowHtml(0, "", "", "", "");
+            oForm.AddRaw("<template id=\"merp-line-tmpl\">" + vRowHtml + "</template>");
+
+            var oAddBtn = new TsgcHTMLButton(T("invoice.add_line", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oAddBtn.ButtonType = "button";
+            oAddBtn.CSSClass = "btn-sm mb-3";
+            oAddBtn.Attributes = "id=\"merp-add-line\"";
+            oForm.Add(oAddBtn);
+
+            // ---- totals (read-only, recomputed by JS) ----
+            var oTotalsGrid = new TsgcHTMLContainer("div");
+            oTotalsGrid.CSSClass = "row";
+            oForm.Add(oTotalsGrid);
+
+            // Append a labeled read-only totals field (raw input so we can emit the
+            // 'readonly' attribute, which TsgcHTMLField does not expose).
+            Action<string, string, string, string> addTotalField =
+                (aName, aLabelKey, aFieldId, aValue) =>
+            {
+                oTotalsGrid.AddRaw("<div class=\"col-md-4 mb-3\">" +
+                    "<label class=\"form-label\" for=\"" + aFieldId + "\">" +
+                    HtmlEsc(T(aLabelKey, aLang)) + "</label>" + "<input type=\"text\" id=\"" +
+                    aFieldId + "\" name=\"" + aName + "\" class=\"form-control\" readonly " +
+                    "value=\"" + HtmlEsc(aValue) + "\"></div>");
+            };
+
+            addTotalField("subtotal", "invoice.subtotal", "merp-subtotal", FmtNum2(aInv.Subtotal));
+            addTotalField("tax_amount", "invoice.tax", "merp-tax", FmtNum2(aInv.TaxAmount));
+            addTotalField("total", "invoice.total", "merp-total", FmtNum2(aInv.Total));
+
+            var oNotes = new TsgcHTMLTextArea("notes");
+            oNotes.FieldID = "invoice-notes";
+            oNotes.Label_ = T("invoice.notes", aLang);
+            oNotes.Value = aInv.Notes;
+            oNotes.Rows = 2;
+            oNotes.ColClass = "col-12 mb-3";
+            oForm.Add(oNotes);
+
+            // Save + Cancel.
+            var oButtons = new TsgcHTMLContainer("div");
+            oButtons.CSSClass = "d-flex gap-2";
+            var oSave = new TsgcHTMLButton(T("common.save", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oSave.ButtonType = "submit";
+            oButtons.Add(oSave);
+            var oCancel = new TsgcHTMLButton(T("common.cancel", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oCancel.Href = "/invoices";
+            oButtons.Add(oCancel);
+            oForm.Add(oButtons);
+
+            oCard.Body.Add(oForm);
+            oRoot.Add(oCard);
+
+            // Inline JS that powers add/remove lines + live totals.
+            var oScript = new TsgcHTMLScript();
+            oScript.Code = InvoiceFormScript();
+            oRoot.Add(oScript);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(vTitle, vBody, "invoices", aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // reports
+        // ---------------------------------------------------------------------
+
+        // Reports / Statistics page (inside shell, any logged-in user).
+        public string BuildReportsPage(string aGranularity, TERPRevenueMonth[] aSeries,
+            int aCurCount, double aCurRevenue, int aCurNewCustomers, int aPrevCount,
+            double aPrevRevenue, int aPrevNewCustomers, TERPInvoiceListRow[] aTopCustomers,
+            string aCurrency, string aDisplayName, string aRole, string aTheme, string aLang)
+        {
+            // Normalize the granularity to one of day/week/month.
+            string vG = (aGranularity ?? string.Empty).Trim().ToLowerInvariant();
+            if ((vG != "day") && (vG != "week") && (vG != "month"))
+                vG = "month";
+
+            // "per day | per week | per month" suffix for the chart titles.
+            string vPerKey;
+            if (vG == "day")
+                vPerKey = "reports.per_day";
+            else if (vG == "week")
+                vPerKey = "reports.per_week";
+            else
+                vPerKey = "reports.per_month";
+            string vTrendTitle = T("reports.revenue_trend", aLang) + " (" +
+                T(vPerKey, aLang) + ")";
+
+            // Average invoice value = revenue / count for each period.
+            double vCurAvg;
+            double vPrevAvg;
+            if (aCurCount > 0)
+                vCurAvg = aCurRevenue / aCurCount;
+            else
+                vCurAvg = 0;
+            if (aPrevCount > 0)
+                vPrevAvg = aPrevRevenue / aPrevCount;
+            else
+                vPrevAvg = 0;
+
+            // Format a period-over-period delta: a coloured span.
+            Func<double, double, bool, string> deltaSpan = (aCur, aPrev, aIsMoney) =>
+            {
+                string vClass;
+                string vText;
+                if (aPrev == 0)
+                {
+                    if (aCur == 0)
+                        return "<span class=\"text-muted small fw-semibold\">&mdash;</span>";
+                    vClass = "text-success";
+                    vText = "&#9650; " + T("reports.new", aLang);
+                }
+                else
+                {
+                    double vPct = ((aCur - aPrev) * 100.0) / aPrev;
+                    string vSign;
+                    if (vPct > 0)
+                    {
+                        vClass = "text-success";
+                        vSign = "&#9650; +";
+                    }
+                    else if (vPct < 0)
+                    {
+                        vClass = "text-danger";
+                        vSign = "&#9660; ";
+                    }
+                    else
+                    {
+                        vClass = "text-muted";
+                        vSign = "";
+                    }
+                    vText = vSign + vPct.ToString("0.0", CultureInfo.InvariantCulture) + "%";
+                }
+                return "<span class=\"small fw-semibold " + vClass + "\">" + vText +
+                    "</span> <span class=\"text-muted small\">" +
+                    HtmlEsc(T("reports.vs_previous", aLang)) + "</span>";
+            };
+
+            var oRoot = new TsgcHTMLNodeList();
+
+            // --- heading + subtitle --- //
+            var oHeading = new TsgcHTMLHeading(T("reports.title", aLang), 1);
+            oHeading.CSSClass = "mb-1";
+            oRoot.Add(oHeading);
+            var oSub = new TsgcHTMLParagraph(T("reports.subtitle", aLang));
+            oSub.CSSClass = "text-muted mb-4";
+            oRoot.Add(oSub);
+
+            // --- granularity selector (GET, auto-submit on change) --- //
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "GET";
+            oForm.Action = "/reports";
+            oForm.CSSClass = "row g-3 mb-4 align-items-end";
+            var oColG = new TsgcHTMLContainer("div");
+            oColG.CSSClass = "col-auto";
+            var oSelect = new TsgcHTMLSelect();
+            oSelect.Name = "g";
+            oSelect.Label_ = T("reports.granularity", aLang);
+            oSelect.OnChange = "this.form.submit();";
+            oSelect.AddOption("day", T("reports.day", aLang), vG == "day");
+            oSelect.AddOption("week", T("reports.week", aLang), vG == "week");
+            oSelect.AddOption("month", T("reports.month", aLang), vG == "month");
+            oColG.Add(oSelect);
+            oForm.Add(oColG);
+            oRoot.Add(oForm);
+
+            // --- comparison KPI cards (current vs previous period) --- //
+            var oKpiRow = new TsgcHTMLContainer("div");
+            oKpiRow.CSSClass = "row g-3 mb-4";
+
+            // One comparison KPI card.
+            Action<string, string, string, string, string, string, string> addCompareCard =
+                (aLabelKey, aCurText, aPrevText, aDelta, aIcon, aBorder, aTint) =>
+            {
+                var oCol = new TsgcHTMLContainer("div");
+                oCol.CSSClass = "col-6 col-lg-3";
+
+                var oKpi = new TsgcHTMLCard();
+                oKpi.CSSClass = "h-100 shadow-sm";
+                oKpi.BodyClass = "card-body";
+
+                var oFlex = new TsgcHTMLContainer("div");
+                oFlex.CSSClass = "d-flex align-items-start justify-content-between";
+
+                var oText = new TsgcHTMLContainer("div");
+                var oLbl = new TsgcHTMLParagraph(T(aLabelKey, aLang));
+                oLbl.CSSClass = "text-muted mb-1 small text-uppercase fw-semibold";
+                oText.Add(oLbl);
+                var oNum = new TsgcHTMLHeading(aCurText, 3);
+                oNum.CSSClass = "fw-bold mb-1";
+                oText.Add(oNum);
+                oText.AddRaw("<div class=\"text-muted small mb-1\">" +
+                    HtmlEsc(T("reports.previous", aLang)) + ": <span class=\"fw-semibold\">" +
+                    HtmlEsc(aPrevText) + "</span></div>");
+                oText.AddRaw("<div>" + aDelta + "</div>");
+                oFlex.Add(oText);
+
+                var oIcon = new TsgcHTMLContainer("div");
+                oIcon.CSSClass = "d-flex align-items-center justify-content-center rounded-circle";
+                oIcon.Style = "width:48px;height:48px;flex:0 0 48px;background:" + aTint +
+                    ";color:" + aBorder + ";";
+                oIcon.AddRaw(aIcon);
+                oFlex.Add(oIcon);
+
+                oKpi.Body.Add(oFlex);
+
+                oCol.AddRaw("<div style=\"border-left:4px solid " + aBorder +
+                    ";border-radius:12px;\">");
+                oCol.Add(oKpi);
+                oCol.AddRaw("</div>");
+                oKpiRow.Add(oCol);
+            };
+
+            addCompareCard("reports.invoices",
+                aCurCount.ToString(CultureInfo.InvariantCulture),
+                aPrevCount.ToString(CultureInfo.InvariantCulture),
+                deltaSpan(aCurCount, aPrevCount, false), CS_ICON_INVOICES, "#7C3AED", "#F1EAFD");
+            addCompareCard("reports.revenue", FmtMoney(aCurRevenue, aCurrency),
+                FmtMoney(aPrevRevenue, aCurrency), deltaSpan(aCurRevenue, aPrevRevenue, true),
+                CS_ICON_REVENUE, "#F0A400", "#FFF8E5");
+            addCompareCard("reports.new_customers",
+                aCurNewCustomers.ToString(CultureInfo.InvariantCulture),
+                aPrevNewCustomers.ToString(CultureInfo.InvariantCulture),
+                deltaSpan(aCurNewCustomers, aPrevNewCustomers, false), CS_ICON_CUSTOMERS,
+                "#0EA5A5", "#E3F6F5");
+            addCompareCard("reports.avg_invoice", FmtMoney(vCurAvg, aCurrency),
+                FmtMoney(vPrevAvg, aCurrency), deltaSpan(vCurAvg, vPrevAvg, true),
+                CS_ICON_PRODUCTS, "#7C3AED", "#F1EAFD");
+            oRoot.Add(oKpiRow);
+
+            // --- revenue bar chart (full width) --- //
+            var oChart = new TsgcHTMLMiniBarChart();
+            oChart.Title = vTrendTitle;
+            oChart.CardClass = "card shadow-sm mb-4";
+            oChart.Height = "240px";
+            oChart.BarClass = "bg-primary";
+            oChart.ValueClass = "small text-muted";
+            oChart.EmptyText = T("reports.no_data", aLang);
+            // Day granularity packs 30 buckets, so let it scroll if it overflows.
+            if (vG == "day")
+            {
+                oChart.Scrollable = true;
+                oChart.MinWidth = "900px";
+            }
+            for (int vI = 0; vI < aSeries.Length; vI++)
+                oChart.AddBar(aSeries[vI].MonthLabel, aSeries[vI].Total,
+                    FmtMoney(aSeries[vI].Total, aCurrency));
+            oRoot.AddRaw(oChart.HTML);
+
+            // --- invoice-count bar chart + top customers (2 columns) --- //
+            var oSplitRow = new TsgcHTMLContainer("div");
+            oSplitRow.CSSClass = "row g-3 mb-4";
+
+            // Left: invoices-issued-per-bucket count chart.
+            var oChartCol = new TsgcHTMLContainer("div");
+            oChartCol.CSSClass = "col-12 col-lg-7";
+            var oCountChart = new TsgcHTMLMiniBarChart();
+            oCountChart.Title = T("reports.count_trend", aLang) + " (" + T(vPerKey, aLang) + ")";
+            oCountChart.CardClass = "card shadow-sm h-100";
+            oCountChart.Height = "220px";
+            oCountChart.BarClass = "bg-info";
+            oCountChart.ValueClass = "small text-muted";
+            oCountChart.EmptyText = T("reports.no_data", aLang);
+            if (vG == "day")
+            {
+                oCountChart.Scrollable = true;
+                oCountChart.MinWidth = "900px";
+            }
+            for (int vI = 0; vI < aSeries.Length; vI++)
+                oCountChart.AddBar(aSeries[vI].MonthLabel, aSeries[vI].Cnt,
+                    aSeries[vI].Cnt.ToString(CultureInfo.InvariantCulture));
+            oChartCol.AddRaw(oCountChart.HTML);
+            oSplitRow.Add(oChartCol);
+
+            // Right: top customers by revenue table.
+            var oCustCol = new TsgcHTMLContainer("div");
+            oCustCol.CSSClass = "col-12 col-lg-5";
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm h-100";
+            oCard.BodyClass = "card-body";
+            oCard.Body.Add(new TsgcHTMLHeading(T("reports.top_customers", aLang), 5));
+
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm table-hover align-middle mb-0";
+            oTable.TheadClass = "table-light";
+            oTable.AddColumn(T("reports.customer", aLang));
+            oTable.AddColumn(T("reports.invoices", aLang), "text-end");
+            oTable.AddColumn(T("reports.revenue", aLang), "text-end");
+            if (aTopCustomers.Length == 0)
+                oTable.AddEmptyRow(T("reports.no_data", aLang), 3);
+            else
+                for (int vI = 0; vI < aTopCustomers.Length; vI++)
+                {
+                    var oRow = oTable.AddRow();
+                    // CustomerName + Total carry the customer + revenue; CustomerId
+                    // is repurposed to carry the per-customer invoice count.
+                    oRow.AddCellText(aTopCustomers[vI].CustomerName);
+                    oRow.AddCellText(
+                        aTopCustomers[vI].CustomerId.ToString(CultureInfo.InvariantCulture),
+                        "text-end");
+                    oRow.AddCellRaw(HtmlEsc(FmtMoney(aTopCustomers[vI].Total, aCurrency)),
+                        "text-end fw-semibold");
+                }
+            oCard.Body.Add(oTable);
+            oCustCol.Add(oCard);
+            oSplitRow.Add(oCustCol);
+            oRoot.Add(oSplitRow);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("reports.title", aLang), vBody, "reports",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // passkey scripts
+        // ---------------------------------------------------------------------
+
+        // Inline JS for the login-with-passkey button.
+        private string PasskeyLoginScript()
+        {
+            return "(function(){" + "function b64uToBuf(s){if(!s)return new " +
+                "ArrayBuffer(0);" + "s=s.replace(/-/g,'+').replace(/_/g,'/');" +
+                "while(s.length%4)s+='=';" + "var bin=atob(s);" +
+                "var arr=new Uint8Array(bin.length);" +
+                "for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);" +
+                "return arr.buffer;}" + "function bufToB64u(b){" +
+                "var bytes=new Uint8Array(b);var s='';" +
+                "for(var i=0;i<bytes.byteLength;i++)s+=String.fromCharCode(bytes[i]);" +
+                "return btoa(s).replace(/\\+/g,'-').replace(/\\//g,'_')" +
+                ".replace(/=+$/,'');}" +
+                "var btn=document.getElementById('passkey-login-btn');" +
+                "var status=document.getElementById('passkey-status');" +
+                "if(!btn)return;" + "btn.addEventListener('click',async function(){" +
+                "try{status.textContent='Requesting passkey...';" + "btn.disabled=true;" +
+                "var r=await fetch('/passkey/login/options',{" +
+                "method:'POST',headers:{'Content-Type':'application/json'," +
+                "'Accept':'application/json'},body:'{}'," +
+                "credentials:'same-origin'});" +
+                "if(!r.ok){var je=await r.json().catch(function(){return {};});" +
+                "throw new Error(je.error||('options '+r.status));}" +
+                "var opts=await r.json();" + "opts.challenge=b64uToBuf(opts.challenge);" +
+                "if(opts.allowCredentials){opts.allowCredentials.forEach(" +
+                "function(c){c.id=b64uToBuf(c.id);});}" +
+                "status.textContent='Touch your authenticator...';" +
+                "var assertion=await navigator.credentials.get({publicKey:opts," +
+                "mediation:'optional'});" +
+                "var payload={id:assertion.id,rawId:bufToB64u(assertion.rawId)," +
+                "type:assertion.type,response:{" +
+                "clientDataJSON:bufToB64u(assertion.response.clientDataJSON)," +
+                "authenticatorData:bufToB64u(assertion.response.authenticatorData)," +
+                "signature:bufToB64u(assertion.response.signature)," +
+                "userHandle:assertion.response.userHandle?" +
+                "bufToB64u(assertion.response.userHandle):null}};" +
+                "var v=await fetch('/passkey/login/verify',{" +
+                "method:'POST',headers:{'Content-Type':'application/json'," +
+                "'Accept':'application/json'}," +
+                "body:JSON.stringify(payload),credentials:'same-origin'});" +
+                "var vj=await v.json().catch(function(){return {};});" +
+                "if(v.ok&&vj.ok){window.location=vj.redirect||'/';}" +
+                "else{throw new Error(vj.error||('verify '+v.status));}" + "}catch(e){" +
+                "status.textContent='Error: '+(e&&e.message?e.message:String(e));" +
+                "btn.disabled=false;}" + "});" + "})();";
+        }
+
+        // Inline JS for the register-passkey button.
+        private string PasskeyRegisterScript()
+        {
+            return "(function(){" + "function b64uToBuf(s){" +
+                "if(!s)return new ArrayBuffer(0);" +
+                "s=s.replace(/-/g,'+').replace(/_/g,'/');" +
+                "while(s.length%4)s+='=';" + "var bin=atob(s);" +
+                "var arr=new Uint8Array(bin.length);" +
+                "for(var i=0;i<bin.length;i++)arr[i]=bin.charCodeAt(i);" +
+                "return arr.buffer;}" + "function bufToB64u(b){" +
+                "var bytes=new Uint8Array(b);var s='';" +
+                "for(var i=0;i<bytes.byteLength;i++)s+=String.fromCharCode(bytes[i]);" +
+                "return btoa(s).replace(/\\+/g,'-').replace(/\\//g,'_')" +
+                ".replace(/=+$/,'');}" +
+                "var btn=document.getElementById('passkey-register-btn');" +
+                "var status=document.getElementById('passkey-register-status');" +
+                "if(!btn)return;" + "btn.addEventListener('click',async function(){" +
+                "try{" + "status.textContent='Requesting passkey...';" +
+                "btn.disabled=true;" +
+                "var nameInput=document.getElementById('passkey-name');" +
+                "var name=nameInput?nameInput.value:'';" +
+                "var qs=name?('?name='+encodeURIComponent(name)):'';" +
+                "var r=await fetch('/passkey/register/options'+qs,{" +
+                "method:'POST',headers:{'Content-Type':'application/json'," +
+                "'Accept':'application/json'},body:'{}'," +
+                "credentials:'same-origin'});" +
+                "if(!r.ok){var je=await r.json().catch(function(){return {};});" +
+                "throw new Error(je.error||('options '+r.status));}" +
+                "var opts=await r.json();" + "opts.challenge=b64uToBuf(opts.challenge);" +
+                "opts.user.id=b64uToBuf(opts.user.id);" +
+                "if(opts.excludeCredentials){opts.excludeCredentials.forEach(" +
+                "function(c){c.id=b64uToBuf(c.id);});}" +
+                "status.textContent='Touch your authenticator...';" +
+                "var cred=await navigator.credentials.create({publicKey:opts});" +
+                "var attestation={id:cred.id,rawId:bufToB64u(cred.rawId)," +
+                "type:cred.type,response:{" +
+                "clientDataJSON:bufToB64u(cred.response.clientDataJSON)," +
+                "attestationObject:bufToB64u(cred.response.attestationObject)}," +
+                "clientExtensionResults:cred.getClientExtensionResults?" +
+                "cred.getClientExtensionResults():{}};" +
+                "if(cred.response.getTransports)attestation.response.transports=" +
+                "cred.response.getTransports();" +
+                "var v=await fetch('/passkey/register/verify'+qs,{" +
+                "method:'POST',headers:{'Content-Type':'application/json'," +
+                "'Accept':'application/json'}," +
+                "body:JSON.stringify(attestation),credentials:'same-origin'});" +
+                "var vj=await v.json().catch(function(){return {};});" +
+                "if(v.ok&&vj.ok){status.textContent='Passkey registered.';" +
+                "window.location.reload();}" +
+                "else{throw new Error(vj.error||('verify '+v.status));}" + "}catch(e){" +
+                "status.textContent='Error: '+(e&&e.message?e.message:String(e));" +
+                "btn.disabled=false;}" + "});" + "})();";
+        }
+
+        // ---------------------------------------------------------------------
+        // admin
+        // ---------------------------------------------------------------------
+
+        // Admin sub-nav tabs (Settings / Firewall / Audit log). aActive is
+        // 'settings' | 'firewall' | 'audit'.
+        private static string AdminSubNav(string aActive, string aLang)
+        {
+            Func<string, string, string, string> tab = (aHref, aKey, aId) =>
+            {
+                string vClass = "nav-link";
+                if (string.Equals(aActive, aId, StringComparison.OrdinalIgnoreCase))
+                    vClass = vClass + " active";
+                return "<li class=\"nav-item\"><a class=\"" + vClass + "\" href=\"" + aHref +
+                    "\">" + HtmlEsc(T(aKey, aLang)) + "</a></li>";
+            };
+
+            return "<ul class=\"nav nav-tabs mb-4\">" + tab("/admin", "admin.settings", "settings") +
+                tab("/admin/firewall", "admin.firewall", "firewall") +
+                tab("/admin/audit", "admin.audit", "audit") + "</ul>";
+        }
+
+        // Admin -> Settings page (inside shell, admin only).
+        public string BuildAdminSettingsPage(KeyValuePair<string, string>[] aSettings,
+            KeyValuePair<string, string>[] aServerInfo, string aDisplayName, string aRole,
+            string aTheme, string aLang, string aFlash)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(T("admin.title", aLang), 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            oRoot.AddRaw(AdminSubNav("settings", aLang));
+
+            if (aFlash != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aFlash);
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oAlert.Dismissible = true;
+                oAlert.CSSClass = "mb-4";
+                oRoot.Add(oAlert);
+            }
+
+            // --- editable settings form --- //
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm mb-4";
+            oCard.BodyClass = "card-body";
+            oCard.Body.Add(new TsgcHTMLHeading(T("admin.settings", aLang), 5));
+
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "POST";
+            oForm.Action = "/admin/settings";
+
+            var oRowGrid = new TsgcHTMLContainer("div");
+            oRowGrid.CSSClass = "row";
+            oForm.Add(oRowGrid);
+
+            // The localized label for a setting key, plus its input type (number
+            // for the numeric settings, text otherwise).
+            Action<string, string> addSettingField = (aName, aValue) =>
+            {
+                TsgcHTMLInputType vType;
+                if ((aName == "default_tax_rate") || (aName == "session_timeout_hours"))
+                    vType = TsgcHTMLInputType.itNumber;
+                else
+                    vType = TsgcHTMLInputType.itText;
+                var oField = new TsgcHTMLField(vType, aName);
+                oField.FieldID = "setting-" + aName;
+                oField.Label_ = T("admin.setting." + aName, aLang);
+                oField.Value = aValue;
+                oField.ColClass = "col-md-6 mb-3";
+                oRowGrid.Add(oField);
+            };
+
+            for (int vI = 0; vI < aSettings.Length; vI++)
+                addSettingField(aSettings[vI].Key, aSettings[vI].Value);
+
+            var oSave = new TsgcHTMLButton(T("common.save", aLang), TsgcHTMLButtonStyle.bsPrimary);
+            oSave.ButtonType = "submit";
+            oForm.Add(oSave);
+
+            oCard.Body.Add(oForm);
+            oRoot.Add(oCard);
+
+            // --- read-only server info --- //
+            var oInfoCard = new TsgcHTMLCard();
+            oInfoCard.CSSClass = "shadow-sm";
+            oInfoCard.BodyClass = "card-body";
+            oInfoCard.Body.Add(new TsgcHTMLHeading(T("admin.server_info", aLang), 5));
+
+            var oTable = new TsgcHTMLContainer("table");
+            oTable.CSSClass = "table table-sm align-middle mb-0";
+            var oTbody = new TsgcHTMLContainer("tbody");
+            for (int vI = 0; vI < aServerInfo.Length; vI++)
+                oTbody.AddRaw("<tr><th class=\"text-nowrap\" style=\"width:30%;\">" +
+                    HtmlEsc(T("admin.info." + aServerInfo[vI].Key, aLang)) + "</th><td>" +
+                    HtmlEsc(aServerInfo[vI].Value) + "</td></tr>");
+            oTable.Add(oTbody);
+            oInfoCard.Body.Add(oTable);
+            oRoot.Add(oInfoCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("admin.title", aLang), vBody, "admin",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // Admin -> Firewall page (inside shell, admin only).
+        public string BuildAdminFirewallPage(TERPFirewallEntry[] aBlocked,
+            TERPFirewallEntry[] aIgnored, string aDisplayName, string aRole, string aTheme,
+            string aLang, string aFlash)
+        {
+            string vConfirm = T("common.confirm_delete", aLang);
+            var oRoot = new TsgcHTMLNodeList();
+
+            // One firewall section: a table of entries plus an "Add" form.
+            Action<string, TERPFirewallEntry[], string, string> addSection =
+                (aTitleKey, aRows, aRemoveAction, aAddAction) =>
+            {
+                var oCard = new TsgcHTMLCard();
+                oCard.CSSClass = "shadow-sm mb-4";
+                oCard.BodyClass = "card-body";
+                oCard.Body.Add(new TsgcHTMLHeading(T(aTitleKey, aLang), 5));
+
+                var oTable = new TsgcHTMLTable();
+                oTable.CSSClass = "table table-sm align-middle mb-3";
+                oTable.AddColumn(T("firewall.ip", aLang));
+                oTable.AddColumn(T("firewall.reason", aLang));
+                oTable.AddColumn(T("firewall.created", aLang));
+                oTable.AddColumn(T("common.actions", aLang), "text-end");
+
+                if (aRows.Length == 0)
+                    oTable.AddEmptyRow(T("firewall.none", aLang), 4);
+                else
+                    for (int vJ = 0; vJ < aRows.Length; vJ++)
+                    {
+                        var oRow = oTable.AddRow();
+                        oRow.AddCellText(aRows[vJ].IP);
+                        oRow.AddCellText(aRows[vJ].Reason);
+                        oRow.AddCellText(FmtDate(aRows[vJ].CreatedAt));
+                        var oActions = oRow.AddCell();
+                        oActions.CellClass = "text-end";
+                        oActions.AddRaw("<form method=\"post\" action=\"" + aRemoveAction +
+                            "\" class=\"d-inline\" onsubmit=\"return confirm('" +
+                            HtmlEsc(vConfirm).Replace("'", "\\'") +
+                            "');\"><input type=\"hidden\" name=\"ip\" value=\"" +
+                            HtmlEsc(aRows[vJ].IP) +
+                            "\"><button type=\"submit\" class=\"btn btn-sm btn-outline-danger\">" +
+                            HtmlEsc(T("firewall.remove", aLang)) + "</button></form>");
+                    }
+                oCard.Body.Add(oTable);
+
+                // Add form (ip + reason on one row).
+                var oForm = new TsgcHTMLForm();
+                oForm.Method = "POST";
+                oForm.Action = aAddAction;
+                var oGrid = new TsgcHTMLContainer("div");
+                oGrid.CSSClass = "row g-2 align-items-end";
+                oForm.Add(oGrid);
+
+                var oIPField = new TsgcHTMLField(TsgcHTMLInputType.itText, "ip");
+                oIPField.Label_ = T("firewall.ip", aLang);
+                oIPField.Placeholder = "1.2.3.4";
+                oIPField.Required = true;
+                oIPField.ColClass = "col-md-4";
+                oGrid.Add(oIPField);
+
+                var oReasonField = new TsgcHTMLField(TsgcHTMLInputType.itText, "reason");
+                oReasonField.Label_ = T("firewall.reason", aLang);
+                oReasonField.ColClass = "col-md-5";
+                oGrid.Add(oReasonField);
+
+                var oBtnCol = new TsgcHTMLContainer("div");
+                oBtnCol.CSSClass = "col-md-3";
+                var oAddBtn = new TsgcHTMLButton(T("firewall.add", aLang),
+                    TsgcHTMLButtonStyle.bsPrimary);
+                oAddBtn.ButtonType = "submit";
+                oBtnCol.Add(oAddBtn);
+                oGrid.Add(oBtnCol);
+
+                oCard.Body.Add(oForm);
+                oRoot.Add(oCard);
+            };
+
+            var oHeading = new TsgcHTMLHeading(T("admin.firewall", aLang), 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            oRoot.AddRaw(AdminSubNav("firewall", aLang));
+
+            if (aFlash != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aFlash);
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oAlert.Dismissible = true;
+                oAlert.CSSClass = "mb-4";
+                oRoot.Add(oAlert);
+            }
+
+            addSection("firewall.blocked", aBlocked, "/admin/firewall/unblock",
+                "/admin/firewall/block");
+            addSection("firewall.ignored", aIgnored, "/admin/firewall/unignore",
+                "/admin/firewall/ignore");
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("admin.firewall", aLang), vBody, "admin",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // A coloured Bootstrap badge for an audit action code.
+        private static string AuditActionBadge(string aAction, string aLang)
+        {
+            string vCode = (aAction ?? string.Empty).Trim().ToLowerInvariant();
+            string vVariant;
+            if (vCode == "delete")
+                vVariant = "danger";
+            else if (vCode == "login_failed")
+                vVariant = "warning";
+            else if (vCode == "create")
+                vVariant = "success";
+            else if ((vCode == "login") || (vCode == "logout"))
+                vVariant = "info";
+            else
+                vVariant = "secondary";
+            string vLabel = T("audit.action." + vCode, aLang);
+            if (vLabel == ("audit.action." + vCode))
+                vLabel = aAction;
+            // warning uses dark text for contrast (Bootstrap convention).
+            if (vVariant == "warning")
+                return "<span class=\"badge bg-warning text-dark\">" + HtmlEsc(vLabel) + "</span>";
+            return "<span class=\"badge bg-" + vVariant + "\">" + HtmlEsc(vLabel) + "</span>";
+        }
+
+        // Admin -> Audit log page (inside shell, admin only).
+        public string BuildAdminAuditPage(TERPAuditRow[] aRows, string[] aActions,
+            string aActionFilter, string aUserFilter, int aPage, int aPageCount,
+            string aDisplayName, string aRole, string aTheme, string aLang)
+        {
+            string vAction = (aActionFilter ?? string.Empty).Trim();
+
+            // The localized action label for the filter <option>.
+            Func<string, string> actionLabel = (aCode) =>
+            {
+                string vResult = T("audit.action." + aCode.ToLowerInvariant(), aLang);
+                if (vResult == ("audit.action." + aCode.ToLowerInvariant()))
+                    vResult = aCode;
+                return vResult;
+            };
+
+            var oRoot = new TsgcHTMLNodeList();
+            var oHeading = new TsgcHTMLHeading(T("admin.audit", aLang), 1);
+            oHeading.CSSClass = "mb-4";
+            oRoot.Add(oHeading);
+
+            oRoot.AddRaw(AdminSubNav("audit", aLang));
+
+            var oCard = new TsgcHTMLCard();
+            oCard.CSSClass = "shadow-sm";
+            oCard.BodyClass = "card-body";
+
+            // Filter form (GET): action select + username text field + submit.
+            var oFilterForm = new TsgcHTMLForm();
+            oFilterForm.Method = "GET";
+            oFilterForm.Action = "/admin/audit";
+            oFilterForm.CSSClass = "mb-3";
+            var oFilterRow = new TsgcHTMLContainer("div");
+            oFilterRow.CSSClass = "row g-2 align-items-end";
+
+            var oActionCol = new TsgcHTMLContainer("div");
+            oActionCol.CSSClass = "col-auto";
+            var oActionSel = new TsgcHTMLSelect();
+            oActionSel.FieldID = "audit-action-filter";
+            oActionSel.Name = "action";
+            oActionSel.Label_ = T("audit.filter_action", aLang);
+            oActionSel.AddOption("all", T("audit.all_actions", aLang),
+                (vAction == "") || string.Equals(vAction, "all", StringComparison.OrdinalIgnoreCase));
+            for (int vI = 0; vI < aActions.Length; vI++)
+                oActionSel.AddOption(aActions[vI], actionLabel(aActions[vI]),
+                    string.Equals(vAction, aActions[vI], StringComparison.OrdinalIgnoreCase));
+            oActionCol.Add(oActionSel);
+            oFilterRow.Add(oActionCol);
+
+            var oUserCol = new TsgcHTMLContainer("div");
+            oUserCol.CSSClass = "col-auto";
+            var oUserInput = new TsgcHTMLField(TsgcHTMLInputType.itText, "user");
+            oUserInput.FieldID = "audit-user-filter";
+            oUserInput.Label_ = T("audit.filter_user", aLang);
+            oUserInput.Value = aUserFilter;
+            oUserCol.Add(oUserInput);
+            oFilterRow.Add(oUserCol);
+
+            var oBtnCol = new TsgcHTMLContainer("div");
+            oBtnCol.CSSClass = "col-auto";
+            var oFilterBtn = new TsgcHTMLButton(T("common.search", aLang),
+                TsgcHTMLButtonStyle.bsOutlineSecondary);
+            oFilterBtn.ButtonType = "submit";
+            oBtnCol.Add(oFilterBtn);
+            oFilterRow.Add(oBtnCol);
+
+            oFilterForm.Add(oFilterRow);
+            oCard.Body.Add(oFilterForm);
+
+            // Audit table (newest first).
+            var oTable = new TsgcHTMLTable();
+            oTable.CSSClass = "table table-sm align-middle mb-0";
+            oTable.AddColumn(T("audit.timestamp", aLang));
+            oTable.AddColumn(T("audit.user", aLang));
+            oTable.AddColumn(T("audit.action", aLang));
+            oTable.AddColumn(T("audit.entity", aLang));
+            oTable.AddColumn(T("audit.details", aLang));
+            oTable.AddColumn(T("audit.ip", aLang));
+
+            if (aRows.Length == 0)
+                oTable.AddEmptyRow(T("audit.none", aLang), 6);
+            else
+                for (int vI = 0; vI < aRows.Length; vI++)
+                {
+                    var oRow = oTable.AddRow();
+                    oRow.AddCellText(FmtDate(aRows[vI].Ts));
+                    if ((aRows[vI].Username ?? string.Empty).Trim() != "")
+                        oRow.AddCellText(aRows[vI].Username);
+                    else
+                        oRow.AddCellText("anonymous");
+                    oRow.AddCellRaw(AuditActionBadge(aRows[vI].Action, aLang));
+                    // Entity: "<type> #<id>" when an id is present, else just the type.
+                    string vEntity = aRows[vI].EntityType;
+                    if (aRows[vI].EntityId > 0)
+                        vEntity = vEntity + " #" +
+                            aRows[vI].EntityId.ToString(CultureInfo.InvariantCulture);
+                    oRow.AddCellText(vEntity);
+                    oRow.AddCellText(aRows[vI].Details);
+                    oRow.AddCellText(aRows[vI].IP);
+                }
+
+            oCard.Body.Add(oTable);
+
+            // Prev / next pager (only when there is more than one page).
+            if (aPageCount > 1)
+            {
+                string vBaseQS = "/admin/audit?action=" + HtmlEsc(vAction) + "&user=" +
+                    HtmlEsc(aUserFilter) + "&p=";
+                string vPager = "<nav class=\"mt-3\"><ul class=\"pagination pagination-sm mb-0 " +
+                    "justify-content-between\">";
+                // Previous.
+                if (aPage > 1)
+                    vPager = vPager + "<li class=\"page-item\"><a class=\"page-link\" href=\"" +
+                        vBaseQS + (aPage - 1).ToString(CultureInfo.InvariantCulture) + "\">" +
+                        HtmlEsc(T("common.prev", aLang)) + "</a></li>";
+                else
+                    vPager = vPager + "<li class=\"page-item disabled\"><span " +
+                        "class=\"page-link\">" + HtmlEsc(T("common.prev", aLang)) + "</span></li>";
+                // Page indicator.
+                vPager = vPager + "<li class=\"page-item disabled\"><span " +
+                    "class=\"page-link\">" + aPage.ToString(CultureInfo.InvariantCulture) + " / " +
+                    aPageCount.ToString(CultureInfo.InvariantCulture) + "</span></li>";
+                // Next.
+                if (aPage < aPageCount)
+                    vPager = vPager + "<li class=\"page-item\"><a class=\"page-link\" href=\"" +
+                        vBaseQS + (aPage + 1).ToString(CultureInfo.InvariantCulture) + "\">" +
+                        HtmlEsc(T("common.next", aLang)) + "</a></li>";
+                else
+                    vPager = vPager + "<li class=\"page-item disabled\"><span " +
+                        "class=\"page-link\">" + HtmlEsc(T("common.next", aLang)) + "</span></li>";
+                vPager = vPager + "</ul></nav>";
+                oCard.Body.AddRaw(vPager);
+            }
+
+            oRoot.Add(oCard);
+
+            string vBody = oRoot.HTML;
+            return BuildPageShell(T("admin.audit", aLang), vBody, "admin",
+                aDisplayName, aRole, aTheme, aLang);
+        }
+
+        // ---------------------------------------------------------------------
+        // forbidden (standalone, no shell)
+        // ---------------------------------------------------------------------
+
+        // Standalone (no shell) 403 page used by the firewall enforcement and the
+        // non-admin admin gate. aMessageKey is the localized body message key.
+        public string BuildForbiddenPage(string aTheme, string aLang, string aMessageKey)
+        {
+            var oRoot = new TsgcHTMLNodeList();
+            var oContainer = new TsgcHTMLContainer("div");
+            oContainer.CSSClass = "container py-5 text-center";
+            var oHeading = new TsgcHTMLHeading("403 - " + T("admin.forbidden", aLang), 1);
+            oHeading.CSSClass = "mb-3";
+            oContainer.Add(oHeading);
+            var oPara = new TsgcHTMLParagraph(T(aMessageKey, aLang));
+            oPara.CSSClass = "lead";
+            oContainer.Add(oPara);
+            oRoot.Add(oContainer);
+            string vBody = oRoot.HTML;
+            return WrapTemplate(BrandText(aLang) + " - " + T("admin.forbidden", aLang),
+                vBody, aTheme, aLang);
+        }
+    }
+}

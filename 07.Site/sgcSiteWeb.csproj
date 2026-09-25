@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Site Layouts demo on ASP.NET Core (mirror of demos\60.HTML\07.Site).
+
+    The 60.HTML version hosts TsgcWebSocketHTTPServer and renders the page in
+    DispatchRequest. This mirror keeps the SAME page-building logic (sgcSite_Pages.cs
+    is copied VERBATIM) but hosts it on Kestrel: the ASP.NET Core adapter serves the
+    client assets and the WebSocket push channel, and this app owns "/" via MapGet,
+    reading the same layout/theme/mode/page query contract.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Site</RootNamespace>
+    <AssemblyName>sgcSiteWeb</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+  </ItemGroup>
+
+</Project>

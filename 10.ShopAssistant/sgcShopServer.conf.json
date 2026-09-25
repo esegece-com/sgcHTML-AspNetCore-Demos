@@ -1,0 +1,11 @@
+{
+    "listen": {
+        "address": "127.0.0.1",
+        "port": 8096
+    },
+    "ai": {
+        "provider": "none",
+        "apiKeyEnvVar": "TECHNEST_AI_API_KEY",
+        "model": ""
+    }
+}

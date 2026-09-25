@@ -1,0 +1,16 @@
+{
+    "listen": {
+        "address": "0.0.0.0",
+        "port": 5706
+    },
+    "database": {
+        "file": "data\\wms.db"
+    },
+    "admin": {
+        "user": "admin",
+        "password": "admin"
+    },
+    "app": {
+        "company": "Northwind Distribution"
+    }
+}

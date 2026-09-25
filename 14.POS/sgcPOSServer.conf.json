@@ -1,0 +1,21 @@
+{
+    "listen": {
+        "address": "0.0.0.0",
+        "port": 5707
+    },
+    "database": {
+        "file": "data\\pos.db"
+    },
+    "admin": {
+        "user": "admin",
+        "password": "admin"
+    },
+    "store": {
+        "name": "eSeGeCe Convenience",
+        "address": "14 Market Street, Springfield",
+        "tax_id": "VAT B-12345678",
+        "currency_symbol": "$",
+        "discount_pin_threshold": "10.00",
+        "shift_target": "1200.00"
+    }
+}

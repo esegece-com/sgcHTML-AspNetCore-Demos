@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Grid features demo on ASP.NET Core (mirror of demos\60.HTML\06.Grid).
+
+    The 60.HTML version hosts TsgcWebSocketHTTPServer and renders each grid
+    fragment in DispatchRequest. This mirror keeps the SAME page-building logic
+    (sgcGrid_Pages.cs is copied VERBATIM) but hosts it on Kestrel: the ASP.NET
+    Core adapter serves the built-in htmx / Bootstrap client assets and the
+    WebSocket push channel, and this app owns every route via MapGet, preserving
+    the exact route paths / methods / query params the reused pages emit.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>GridDemo</RootNamespace>
+    <AssemblyName>sgcGridWeb</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,13 @@
+{
+    "listen": {
+        "address": "0.0.0.0",
+        "port": 5700
+    },
+    "database": {
+        "file": "data\\erp.db"
+    },
+    "admin": {
+        "user": "admin",
+        "password": "admin"
+    }
+}

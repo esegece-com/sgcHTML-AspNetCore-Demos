@@ -1,0 +1,46 @@
+<Project>
+
+  <!--
+    Isolating props for the 61.HTML.AspNetCore demos.
+
+    These are ASP.NET Core web apps (Microsoft.NET.Sdk.Web), NOT the WinForms
+    desktop demos under demos\. This props file deliberately STOPS MSBuild
+    from walking up to demos\Directory.Build.props, which forces
+    net8.0-windows + WinForms + a facade reference. That inheritance is
+    wrong for web apps, so this file intentionally does NOT import the parent.
+    Each web demo project declares its own TargetFramework and references.
+
+    PROJECT VS PACKAGE SWITCH. Unlike the 60.HTML demos, every 61 demo .csproj
+    carries its OWN ProjectReference to ..\..\..\src\sgcHTML.AspNetCore, so with
+    src present, that is inside the repo, the demos already build against the LIVE
+    adapter project and any API drift breaks the demo build immediately. Nothing is
+    added here in that mode. The shipped demo zip (build\zip_demos.bat) carries the
+    demos tree alone, so src is absent, Exists() is false, and the item group below
+    supplies the esegece.sgcHTML.AspNetCore NuGet package instead, which is what
+    makes the shipped bundle buildable. Each demo ProjectReference is conditioned on
+    SgcHTMLAspNetCoreUseProject, so in package mode it disappears and no reference to
+    a missing src project is left behind. Set -p:SgcHTMLAspNetCoreUseProject=false to
+    force package mode inside the repo and rehearse the shipped shape.
+
+    build\zip_demos.bat refuses to build the zip when SgcHTMLAspNetCorePackageVersion
+    has drifted from the library <Version>.
+  -->
+
+  <PropertyGroup>
+    <SgcHTMLAspNetCoreLib>$(MSBuildThisFileDirectory)..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj</SgcHTMLAspNetCoreLib>
+    <SgcHTMLAspNetCoreUseProject Condition="'$(SgcHTMLAspNetCoreUseProject)' == '' And Exists('$(SgcHTMLAspNetCoreLib)')">true</SgcHTMLAspNetCoreUseProject>
+    <SgcHTMLAspNetCoreUseProject Condition="'$(SgcHTMLAspNetCoreUseProject)' == ''">false</SgcHTMLAspNetCoreUseProject>
+
+    <!-- Default = free Community edition. Switch to esegece.sgcHTML.AspNetCore for the
+         paid Registered edition. -->
+    <SgcHTMLAspNetCorePackageId Condition="'$(SgcHTMLAspNetCorePackageId)' == ''">esegece.sgcHTML.AspNetCore.Community</SgcHTMLAspNetCorePackageId>
+    <SgcHTMLAspNetCorePackageVersion Condition="'$(SgcHTMLAspNetCorePackageVersion)' == ''">2026.10.0</SgcHTMLAspNetCorePackageVersion>
+  </PropertyGroup>
+
+  <!-- Package mode only. In project mode the demo .csproj files already carry the
+       adapter ProjectReference, so adding one here would duplicate it. -->
+  <ItemGroup Condition="'$(SgcHTMLAspNetCoreUseProject)' != 'true'">
+    <PackageReference Include="$(SgcHTMLAspNetCorePackageId)" Version="$(SgcHTMLAspNetCorePackageVersion)" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    sgcHTML Components showcase on ASP.NET Core (mirror of demos\60.HTML\08.Components).
+
+    The 60.HTML version hosts TsgcWebSocketHTTPServer and drives the realtime
+    part with a background push thread + OnHTMXMessage on the engine. This mirror
+    keeps the SAME page-building logic (sgcComponents_Pages.cs is copied VERBATIM)
+    but hosts it on Kestrel: the ASP.NET Core adapter serves the client assets and
+    owns the /ws WebSocket channel, a BackgroundService replaces the push thread
+    and broadcasts through ISgcHtmlHub, and the engine's OnHTMXMessage is wired to
+    reproduce the inbound job:cancel (broadcast) + autoCompleteSearch (per-sender
+    reply) behavior. This app owns every page route via MapGet.
+
+    Nullable is enabled because the reused sgcComponents_Pages.cs uses nullable
+    reference annotations (TsgcComponentsLive?, TsgcHTMLJobItem?, string?).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>Components</RootNamespace>
+    <AssemblyName>sgcComponentsWeb</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+  </ItemGroup>
+
+</Project>
