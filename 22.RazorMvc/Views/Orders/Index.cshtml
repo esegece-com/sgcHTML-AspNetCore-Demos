@@ -1,0 +1,31 @@
+@model IQueryable<OrderRow>
+@{
+    ViewData["Title"] = "Orders";
+}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h3 mb-0">Orders</h1>
+    <div>
+        @* Any element with sgc-dialog loads its URL into the dialog and opens it. *@
+        <a id="edit-first" class="btn btn-outline-secondary" sgc-dialog="edit-order" asp-action="Edit" asp-route-id="1">Edit order 1</a>
+        <a class="btn btn-primary" asp-action="Create">New order</a>
+    </div>
+</div>
+
+@* Page 1 is rendered inline from Model; every later request goes to Read.
+   push-url keeps page, sort and filters in the address bar (back button, bookmarks). *@
+<sgc-grid name="orders" key="Id" items="Model"
+          asp-action="Read" asp-export-action="Export" export="xlsx,pdf"
+          page-size="15" page-sizes="15,30,50"
+          sortable="true" filterable="true" searchable="true" push-url="true">
+    <sgc-column field="Id" title="#" width="70" filterable="false" />
+    <sgc-column field="Reference" searchable="true" />
+    <sgc-column field="Customer" searchable="true" />
+    <sgc-column field="City" />
+    <sgc-column field="OrderDate" title="Date" format="{0:yyyy-MM-dd}" filter="range" />
+    <sgc-column field="Status" />
+    <sgc-column field="Total" format="{0:N2}" align="right" filter="range" />
+    <sgc-column field="Paid" />
+    <sgc-column field="Edit" title="" encode="false" sortable="false" filterable="false" />
+</sgc-grid>
+
+<sgc-dialog name="edit-order" title="Edit order" size="lg" />

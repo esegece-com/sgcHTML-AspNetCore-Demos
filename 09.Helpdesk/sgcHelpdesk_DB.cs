@@ -113,13 +113,39 @@ namespace Helpdesk
             return DateTime.MinValue;
         }
 
-        // Coerce an arbitrary status string to one of the two allowed values.
-        private static string NormalizeStatus(string aStatus)
+        // Four-state pipeline (mirrors the portal helpdesk minus PENDING REVIEW):
+        // new -> pending_resolution -> pending_feedback -> closed. Legacy 'open' rows
+        // and any unrecognized value fall back to 'new', so a bad value never drops a
+        // ticket out of the board.
+        public static string NormalizeStatus(string aStatus)
         {
-            if (string.Equals((aStatus ?? "").Trim(), "closed",
-                StringComparison.OrdinalIgnoreCase))
+            string vStatus = (aStatus ?? "").Trim().ToLowerInvariant();
+            if (vStatus == "closed")
                 return "closed";
-            return "open";
+            if (vStatus == "pending_resolution")
+                return "pending_resolution";
+            if (vStatus == "pending_feedback")
+                return "pending_feedback";
+            return "new";
+        }
+
+        // Coerce a priority to 'low' | 'medium' | 'high' | 'critical' (default
+        // 'medium') and a category to 'general' | 'account' | 'billing' |
+        // 'technical' (default 'general').
+        public static string NormalizePriority(string aPriority)
+        {
+            string vResult = (aPriority ?? "").Trim().ToLowerInvariant();
+            if (vResult != "low" && vResult != "high" && vResult != "critical")
+                vResult = "medium";
+            return vResult;
+        }
+
+        public static string NormalizeCategory(string aCategory)
+        {
+            string vResult = (aCategory ?? "").Trim().ToLowerInvariant();
+            if (vResult != "account" && vResult != "billing" && vResult != "technical")
+                vResult = "general";
+            return vResult;
         }
 
         // Escape LIKE metacharacters ('\', '%', '_') before wrapping in '%...%'.
@@ -218,6 +244,8 @@ namespace Helpdesk
                 Username = ToStr(aR["username"]),
                 Subject = ToStr(aR["subject"]),
                 Status = ToStr(aR["status"]),
+                Priority = NormalizePriority(ToStr(aR["priority"])),
+                Category = NormalizeCategory(ToStr(aR["category"])),
                 CreatedAt = ParseHelpdeskTimestamp(ToStr(aR["created_at"])),
                 UpdatedAt = ParseHelpdeskTimestamp(ToStr(aR["updated_at"]))
             };
@@ -265,7 +293,8 @@ namespace Helpdesk
 
                 "CREATE TABLE IF NOT EXISTS tickets (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, " +
-                "subject TEXT, status TEXT, created_at TEXT, updated_at TEXT)",
+                "subject TEXT, status TEXT, created_at TEXT, " +
+                "updated_at TEXT, priority TEXT, category TEXT)",
 
                 "CREATE TABLE IF NOT EXISTS ticket_messages (" +
                 "id INTEGER PRIMARY KEY AUTOINCREMENT, ticket_id INTEGER, " +
@@ -281,6 +310,31 @@ namespace Helpdesk
                 for (int vI = 0; vI < vTables.Length; vI++)
                     using (SqliteCommand oCmd = NewCmd(oConn, vTables[vI]))
                         oCmd.ExecuteNonQuery();
+
+            using (SqliteConnection oConn = Acquire())
+            {
+                // Migrate legacy two-state data to the pipeline default so old 'open'
+                // tickets show up in the New column of the Kanban board.
+                using (SqliteCommand oCmd = NewCmd(oConn,
+                    "UPDATE tickets SET status = 'new' WHERE status = 'open'"))
+                    oCmd.ExecuteNonQuery();
+                // Kanban columns added later: databases created by an older build get
+                // them here (ADD COLUMN fails when the column already exists).
+                string[] vColumns = { "priority", "category" };
+                for (int vI = 0; vI < vColumns.Length; vI++)
+                {
+                    try
+                    {
+                        using (SqliteCommand oCmd = NewCmd(oConn,
+                            "ALTER TABLE tickets ADD COLUMN " + vColumns[vI] + " TEXT"))
+                            oCmd.ExecuteNonQuery();
+                    }
+                    catch (SqliteException)
+                    {
+                        // already there
+                    }
+                }
+            }
         }
 
         // INSERT the admin user (role 'admin') only when the users table has no
@@ -376,7 +430,7 @@ namespace Helpdesk
                     SeedTicket(oConn, oTx, vAdminId, vNow, vAliceId,
                         "Invoice #4021 shows wrong total",
                         "The total on invoice #4021 does not match the sum of the line " +
-                        "items, it is about 15 dollars too high.", "open", 3, 2.7,
+                        "items, it is about 15 dollars too high.", "pending_resolution", 3, 2.7,
                         "Thanks for flagging this, I can reproduce it on our end and " +
                         "we are looking into it now.");
 
@@ -392,7 +446,7 @@ namespace Helpdesk
                     SeedTicket(oConn, oTx, vAdminId, vNow, vCarolId,
                         "Mobile layout broken on iPhone Safari",
                         "The sidebar overlaps the main content on my iPhone in Safari, " +
-                        "it makes the ticket list unreadable.", "open", 12, 12, "");
+                        "it makes the ticket list unreadable.", "pending_feedback", 12, 12, "");
 
                     // Last month, closed.
                     SeedTicket(oConn, oTx, vAdminId, vNow, vAliceId,
@@ -406,7 +460,7 @@ namespace Helpdesk
                     SeedTicket(oConn, oTx, vAdminId, vNow, vBobId,
                         "Two-factor authentication setup fails",
                         "The QR code on the 2FA setup page never scans with my " +
-                        "authenticator app, tried three different apps.", "open", 45, 45, "");
+                        "authenticator app, tried three different apps.", "pending_feedback", 45, 45, "");
 
                     // 2 months ago, closed.
                     SeedTicket(oConn, oTx, vAdminId, vNow, vCarolId,
@@ -467,18 +521,30 @@ namespace Helpdesk
             return LastInsertRowId(aConn, aTx);
         }
 
+        // Priority + category of the seeded tickets, in seeding order.
+        private static readonly string[] CS_SEED_PRIORITY = { "high", "medium", "low",
+            "high", "critical", "medium", "low", "high", "medium", "medium", "low",
+            "medium" };
+        private static readonly string[] CS_SEED_CATEGORY = { "account", "technical",
+            "general", "billing", "account", "technical", "account", "account",
+            "technical", "technical", "general", "technical" };
+        private int FSeedIdx;
+
         private long InsertSeedTicket(SqliteConnection aConn, SqliteTransaction aTx,
             long aOwnerId, string aSubject, string aStatus, DateTime aCreatedAt,
             DateTime aUpdatedAt)
         {
             using (SqliteCommand oCmd = NewCmd(aConn, "INSERT INTO tickets " +
-                "(user_id, subject, status, created_at, updated_at) " +
-                "VALUES (:uid, :subj, :st, :ca, :ua)"))
+                "(user_id, subject, status, priority, category, created_at, " +
+                "updated_at) VALUES (:uid, :subj, :st, :pr, :cat, :ca, :ua)"))
             {
                 oCmd.Transaction = aTx;
                 AddParam(oCmd, ":uid", aOwnerId);
                 AddParam(oCmd, ":subj", aSubject);
                 AddParam(oCmd, ":st", NormalizeStatus(aStatus));
+                AddParam(oCmd, ":pr", CS_SEED_PRIORITY[FSeedIdx % CS_SEED_PRIORITY.Length]);
+                AddParam(oCmd, ":cat", CS_SEED_CATEGORY[FSeedIdx % CS_SEED_CATEGORY.Length]);
+                FSeedIdx++;
                 AddParam(oCmd, ":ca", FormatHelpdeskTimestamp(aCreatedAt));
                 AddParam(oCmd, ":ua", FormatHelpdeskTimestamp(aUpdatedAt));
                 oCmd.ExecuteNonQuery();
@@ -649,8 +715,9 @@ namespace Helpdesk
             {
                 string vNow = NowTimestamp();
                 using (SqliteCommand oCmd = NewCmd(oConn, "INSERT INTO tickets " +
-                    "(user_id, subject, status, created_at, updated_at) " +
-                    "VALUES (:uid, :subj, 'open', :ca, :ua)"))
+                    "(user_id, subject, status, priority, category, created_at, " +
+                    "updated_at) VALUES (:uid, :subj, 'new', 'medium', " +
+                    "'general', :ca, :ua)"))
                 {
                     oCmd.Transaction = oTx;
                     AddParam(oCmd, ":uid", aUserId);
@@ -693,7 +760,7 @@ namespace Helpdesk
             string vOrderDir = DirSQL(aDir);
 
             string vSQL = "SELECT t.id, t.user_id, u.username, t.subject, t.status, " +
-                "t.created_at, t.updated_at FROM tickets t " +
+                "t.priority, t.category, t.created_at, t.updated_at FROM tickets t " +
                 "JOIN users u ON u.id = t.user_id WHERE t.user_id = :uid ";
             if (vHasSearch)
                 vSQL += "AND t.subject LIKE :s ESCAPE '\\' ";
@@ -737,7 +804,7 @@ namespace Helpdesk
                     "t.subject LIKE :s ESCAPE '\\'";
 
             string vSQL = "SELECT t.id, t.user_id, u.username, t.subject, t.status, " +
-                "t.created_at, t.updated_at FROM tickets t " +
+                "t.priority, t.category, t.created_at, t.updated_at FROM tickets t " +
                 "JOIN users u ON u.id = t.user_id ";
             if (vWhere.Length > 0)
                 vSQL += "WHERE " + vWhere + " ";
@@ -764,7 +831,8 @@ namespace Helpdesk
             aTicket = null;
             using (SqliteConnection oConn = Acquire())
             using (SqliteCommand oCmd = NewCmd(oConn, "SELECT t.id, t.user_id, " +
-                "u.username, t.subject, t.status, t.created_at, t.updated_at " +
+                "u.username, t.subject, t.status, t.priority, t.category, " +
+                "t.created_at, t.updated_at " +
                 "FROM tickets t JOIN users u ON u.id = t.user_id WHERE t.id = :id LIMIT 1"))
             {
                 AddParam(oCmd, ":id", aId);
@@ -785,6 +853,37 @@ namespace Helpdesk
                 "UPDATE tickets SET status = :st, updated_at = :ua WHERE id = :id"))
             {
                 AddParam(oCmd, ":st", NormalizeStatus(aStatus));
+                AddParam(oCmd, ":ua", NowTimestamp());
+                AddParam(oCmd, ":id", aTicketId);
+                return oCmd.ExecuteNonQuery() > 0;
+            }
+        }
+
+        // Kanban board: set a ticket's priority (swimlane) and bump updated_at.
+        public bool SetTicketPriority(long aTicketId, string aPriority)
+        {
+            using (SqliteConnection oConn = Acquire())
+            using (SqliteCommand oCmd = NewCmd(oConn,
+                "UPDATE tickets SET priority = :pr, updated_at = :ua WHERE id = :id"))
+            {
+                AddParam(oCmd, ":pr", NormalizePriority(aPriority));
+                AddParam(oCmd, ":ua", NowTimestamp());
+                AddParam(oCmd, ":id", aTicketId);
+                return oCmd.ExecuteNonQuery() > 0;
+            }
+        }
+
+        // Kanban edit dialog: update subject, priority and category.
+        public bool UpdateTicketDetails(long aTicketId, string aSubject, string aPriority,
+            string aCategory)
+        {
+            using (SqliteConnection oConn = Acquire())
+            using (SqliteCommand oCmd = NewCmd(oConn, "UPDATE tickets SET subject = :subj, " +
+                "priority = :pr, category = :cat, updated_at = :ua WHERE id = :id"))
+            {
+                AddParam(oCmd, ":subj", aSubject);
+                AddParam(oCmd, ":pr", NormalizePriority(aPriority));
+                AddParam(oCmd, ":cat", NormalizeCategory(aCategory));
                 AddParam(oCmd, ":ua", NowTimestamp());
                 AddParam(oCmd, ":id", aTicketId);
                 return oCmd.ExecuteNonQuery() > 0;

@@ -34,7 +34,7 @@
     <!-- Default = free Community edition. Switch to esegece.sgcHTML.AspNetCore for the
          paid Registered edition. -->
     <SgcHTMLAspNetCorePackageId Condition="'$(SgcHTMLAspNetCorePackageId)' == ''">esegece.sgcHTML.AspNetCore.Community</SgcHTMLAspNetCorePackageId>
-    <SgcHTMLAspNetCorePackageVersion Condition="'$(SgcHTMLAspNetCorePackageVersion)' == ''">2026.10.0</SgcHTMLAspNetCorePackageVersion>
+    <SgcHTMLAspNetCorePackageVersion Condition="'$(SgcHTMLAspNetCorePackageVersion)' == ''">2026.10.1</SgcHTMLAspNetCorePackageVersion>
   </PropertyGroup>
 
   <!-- Package mode only. In project mode the demo .csproj files already carry the

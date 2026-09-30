@@ -1,0 +1,13 @@
+@model OrderForm
+@* The same fields as _EditForm, written with the fluent helpers instead of Tag Helpers.
+   A valid post answers SgcRedirect, so htmx navigates to the orders list. *@
+<sgc-form asp-action="Create" hx="true" id="create-form">
+    @Html.Sgc().TextBoxFor(m => m.Reference).Placeholder("PO-12345")
+    @Html.Sgc().AutoCompleteFor(m => m.CustomerId).Search("Customers_Search").MinLength(2).MaxResults(10)
+        .Placeholder("Type 2 letters of a customer").Text((string)ViewBag.CustomerName)
+    @Html.Sgc().DatePickerFor(m => m.OrderDate).Min("2025-01-01")
+    @Html.Sgc().SelectFor(m => m.Status, OrderForm.StatusItems)
+    @Html.Sgc().TextBoxFor(m => m.Total).Placeholder("0.00")
+    @Html.Sgc().CheckBoxFor(m => m.Paid)
+    <sgc-submit text="Create order" />
+</sgc-form>

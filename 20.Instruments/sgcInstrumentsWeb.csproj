@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Instruments control room demo on ASP.NET Core (mirror of
+    demos\60.HTML\20.Instruments, tickets #1156-#1160).
+
+    The 60.HTML version hosts a TsgcWebSocketHTTPServer, renders the 4 pages in
+    DispatchRequest, handles POST /ctl/<name> and POST /ack, and runs the
+    simulated process on a background thread that pushes live fragments only
+    to the browsers showing the matching page. This mirror keeps the SAME view
+    (sgcInstrumentsDemo_Pages.cs is copied VERBATIM) and hosts it on Kestrel:
+
+      - The ASP.NET Core adapter serves the built-in client assets (Bootstrap /
+        htmx / sgcHTMX, by file name).
+      - This app owns the page routes, the control endpoints and the per-page
+        WebSocket channel the sgcHTMX bridge opens on the page URL.
+      - The simulation thread becomes a BackgroundService (hosted service).
+
+    The two host files that were NOT copied are sgcInstrumentsDemo_Server.cs
+    (the TsgcWebSocketHTTPServer host) and the console Program.cs. The
+    conf.json only carried the listen section, which Kestrel replaces
+    (appsettings.json), so it is not copied either.
+
+    Nullable + ImplicitUsings are disabled: the reused file carries no nullable
+    reference annotations, matching the 60.HTML build.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>InstrumentsDemo</RootNamespace>
+    <AssemblyName>sgcInstrumentsWeb</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+  </ItemGroup>
+
+</Project>

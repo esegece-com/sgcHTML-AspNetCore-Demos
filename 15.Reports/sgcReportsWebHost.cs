@@ -20,8 +20,9 @@
 //      into the reused TReportsPasskeys. A per-origin instance is cached so the
 //      WebAuthn begin/finish challenge state survives across the two requests of
 //      a ceremony (see GetPasskeys).
-//    - The realtime /jobs page is driven by a BackgroundService + ISgcHtmlHub
-//      instead of the 60.HTML push thread + TsgcHTMX_Engine_Server.Broadcast.
+//    - The realtime /jobs page and the Analytics live chart / candle feed are
+//      driven by a BackgroundService + ISgcHtmlHub instead of the 60.HTML push
+//      thread + TsgcHTMX_Engine_Server.Broadcast.
 //
 //  The two host files that were NOT copied from 60.HTML are
 //  sgcReports_Server.cs (the TsgcWebSocketHTTPServer host) and the console
@@ -891,6 +892,62 @@ namespace Reports
                 "officedocument.spreadsheetml.sheet", "cross-tab.xlsx", false);
         }
 
+        // ----- analytics ----- //
+
+        // The Analytics section (sgcReports_Analytics, reused verbatim). One
+        // TReportsAnalytics per request, mirror of the 60.HTML HandleAnalytics:
+        // aDoc is the route, aForm carries the field chooser / drill-through post.
+        public IResult Analytics(HttpContext aCtx, IFormCollection aForm,
+            TReportsSession aSession, string aDoc)
+        {
+            TReportsPageCtx vCtx = BuildCtx(aCtx, aSession);
+            string vGrp = GetParam(aCtx, aForm, "grp");
+            string vLR = GetParam(aCtx, aForm, "lr");
+            string vLC = GetParam(aCtx, aForm, "lc");
+            string vLV = GetParam(aCtx, aForm, "lv");
+            TReportsAnalytics oA = new TReportsAnalytics(FDB, FPages);
+            if (aDoc == "/analytics")
+                return Html(200, oA.BuildCharts(vCtx));
+            if (aDoc == "/analytics/charts/region")
+                return Html(200, oA.BuildRegionDetail(vCtx,
+                    GetParam(aCtx, aForm, "label")));
+            if (aDoc == "/analytics/market")
+                return Html(200, oA.BuildMarket(vCtx, GetParam(aCtx, aForm, "style")));
+            if (aDoc == "/analytics/pivot")
+                return Html(200, oA.BuildPivotLab(vCtx, vGrp));
+            if (aDoc == "/analytics/pivot/layout")
+                // field chooser: rows / cols / values posted by the pivot script
+                return Html(200, oA.PivotLayoutFragment(vCtx, vGrp,
+                    GetParam(aCtx, aForm, "rows"), GetParam(aCtx, aForm, "cols"),
+                    GetParam(aCtx, aForm, "values")));
+            if (aDoc == "/analytics/pivot/drill")
+                // drill-through: rows / cols are the JSON paths of the clicked cell
+                return Html(200, oA.PivotDrillFragment(vCtx, vGrp, vLR, vLC, vLV,
+                    GetParam(aCtx, aForm, "rows"), GetParam(aCtx, aForm, "cols")));
+            if (aDoc == "/analytics/pivot/export.xlsx")
+            {
+                if (!RoleCanExport(vCtx.Role))
+                    return Text(403, "The viewer role cannot export.");
+                byte[] vBytes;
+                using (MemoryStream oStream = new MemoryStream())
+                {
+                    oA.PivotXLSX(vGrp, vLR, vLC, vLV, oStream);
+                    vBytes = oStream.ToArray();
+                }
+                return FileBytes(aCtx, vBytes, "application/vnd.openxmlformats-" +
+                    "officedocument.spreadsheetml.sheet", "revenue-pivot.xlsx", false);
+            }
+            return NotFound(aCtx);
+        }
+
+        // One live chart point plus one candle tick, broadcast by
+        // ReportsPushService about every 2 s (mirror of the 60.HTML push thread).
+        public string AnalyticsLiveFragment()
+        {
+            TReportsAnalytics oA = new TReportsAnalytics(FDB, FPages);
+            return oA.LiveChartFragment() + oA.LiveCandleFragment();
+        }
+
         // ----- explore ----- //
 
         private static TReportsExploreFilter BuildExploreFilter(HttpContext aCtx,
@@ -1068,6 +1125,8 @@ namespace Reports
                 return;
             try
             {
+                // the hub bounds every send (SendTimeout), so a client that
+                // stopped reading cannot hang this request
                 FHub.BroadcastAsync(aHTML).GetAwaiter().GetResult();
             }
             catch (Exception)

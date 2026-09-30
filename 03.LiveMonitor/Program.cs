@@ -89,7 +89,13 @@ if (!string.IsNullOrEmpty(vKestrelUrl))
 
 // The app renders its own pages, so the adapter serves assets + the WebSocket
 // channel only (ServeRootPage = false hands page routing back to the pipeline).
-builder.Services.AddSgcHtml(o => o.ServeRootPage = false);
+// The reused dashboard page connects ws-connect="/" (the root path the 60.HTML
+// server accepted), so the adapter accepts the channel on any path.
+builder.Services.AddSgcHtml(o =>
+{
+    o.ServeRootPage = false;
+    o.AcceptWebSocketOnAnyPath = true;
+});
 
 // The host owns the reused singletons (DB pool, session store, page builder,
 // per-origin passkey factory) + the live-metric state. It needs the hub both to

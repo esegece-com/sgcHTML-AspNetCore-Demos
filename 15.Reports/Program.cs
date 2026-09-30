@@ -7,6 +7,7 @@
 //    - sgcReports_Bcrypt.cs    (bcrypt hash / verify)
 //    - sgcReports_Config.cs    (JSON config loader)
 //    - sgcReports_DB.cs        (Microsoft.Data.Sqlite schema + CRUD + seed)
+//    - sgcReports_Analytics.cs (Analytics: chart gallery, candles, pivot lab)
 //    - sgcReports_I18n.cs      (en / es / de string table)
 //    - sgcReports_Pages.cs     (component view layer: every page + fragment)
 //    - sgcReports_Passkeys.cs  (WebAuthn passkey engine bridged to the DB)
@@ -24,8 +25,13 @@
 //    - Cookies (session / theme / language) are read + written through the
 //      native ASP.NET Core cookie API, with the SAME names + attributes.
 //    - A BackgroundService replaces the 60.HTML push thread: every 900 ms it
-//      advances the export jobs (TReportsPages.LiveTick) and broadcasts the
-//      out-of-band fragments through ISgcHtmlHub.
+//      advances the export jobs (TReportsPages.LiveTick) and, every second
+//      loop (about 2 s), one Analytics live chart point + one candle tick, and
+//      broadcasts the out-of-band fragments through ISgcHtmlHub.
+//    - The shared page shell opens the sgcHTMX bridge on ws://host<pathname>
+//      (/jobs, /analytics, /analytics/market ...), so the adapter accepts the
+//      channel on any path (AcceptWebSocketOnAnyPath) and bounds every push
+//      with SendTimeout (2 s): a browser that stopped reading is dropped.
 //    - PASSKEYS: the RP id (request host name) + origin (scheme://host) are
 //      DERIVED from the live request and threaded into the reused passkey engine
 //      instead of the 60.HTML hard-coded localhost (see ReportsWebHost).
@@ -75,7 +81,14 @@ if (!Path.IsPathRooted(vDbPath))
 
 // The app renders its own pages, so the adapter serves assets + the WebSocket
 // channel only (ServeRootPage = false hands page routing back to the pipeline).
-builder.Services.AddSgcHtml(o => o.ServeRootPage = false);
+// The page shell connects the bridge to the page's own path, so upgrades are
+// accepted on any path; a push a client does not read within 2 s drops it.
+builder.Services.AddSgcHtml(o =>
+{
+    o.ServeRootPage = false;
+    o.AcceptWebSocketOnAnyPath = true;
+    o.SendTimeout = TimeSpan.FromSeconds(2);
+});
 
 // The host owns the reused singletons (DB pool, session store, page builder,
 // per-origin passkey factory). Constructed once at startup below; DI disposes it
@@ -93,7 +106,7 @@ var app = builder.Build();
 var host = app.Services.GetRequiredService<ReportsWebHost>();
 
 app.UseWebSockets();   // REQUIRED before UseSgcHtml
-app.UseSgcHtml();      // serves Bootstrap/Chart.js/htmx assets + manifest + sw + /ws
+app.UseSgcHtml();      // serves Bootstrap/Chart.js/htmx assets + manifest + sw + the live channel
 
 // ----- inbound WebSocket messages ----- //
 // The adapter accepts /ws and, for each inbound text frame, calls
@@ -218,6 +231,25 @@ app.MapGet("/pivot/export.pdf",
 app.MapGet("/pivot/export.xlsx",
     (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.PivotExport(ctx, s, false))));
 
+// ----- analytics ----- //
+// Chart gallery, price candles and the pivot lab (drill-through, field chooser,
+// XLSX export; the viewer role gets a 403 on the export).
+app.MapGet("/analytics",
+    (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.Analytics(ctx, null, s, "/analytics"))));
+// the chart ClickURL posts the clicked label (GET works too, as in 60.HTML)
+app.MapMethods("/analytics/charts/region", new[] { "GET", "POST" },
+    (HttpContext ctx) => RunForm(ctx, f => host.Guarded(ctx, s => host.Analytics(ctx, f, s, "/analytics/charts/region"))));
+app.MapGet("/analytics/market",
+    (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.Analytics(ctx, null, s, "/analytics/market"))));
+app.MapGet("/analytics/pivot",
+    (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.Analytics(ctx, null, s, "/analytics/pivot"))));
+app.MapPost("/analytics/pivot/layout",
+    (HttpContext ctx) => RunForm(ctx, f => host.Guarded(ctx, s => host.Analytics(ctx, f, s, "/analytics/pivot/layout"))));
+app.MapPost("/analytics/pivot/drill",
+    (HttpContext ctx) => RunForm(ctx, f => host.Guarded(ctx, s => host.Analytics(ctx, f, s, "/analytics/pivot/drill"))));
+app.MapGet("/analytics/pivot/export.xlsx",
+    (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.Analytics(ctx, null, s, "/analytics/pivot/export.xlsx"))));
+
 // ----- explore ----- //
 app.MapGet("/explore", (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.Explore(ctx, s))));
 app.MapGet("/explore/rows",
@@ -303,31 +335,63 @@ static string GetEmbeddedAsset(string aFileName)
 
 namespace Reports
 {
-    // The live push loop: every 900 ms advance the export jobs and broadcast the
-    // resulting htmx OOB fragments to every connected browser. Mirror of
-    // TReportsServer.PushLoop, driven by the hosted service lifetime instead of a
-    // background thread.
+    // The live push loop: every 900 ms advance the export jobs, every second
+    // loop (about 2 s) add one Analytics chart point + one candle tick, and
+    // broadcast the resulting htmx OOB fragments to every connected browser (the
+    // bridge runs the scripts they carry). Mirror of TReportsServer.PushLoop,
+    // driven by the hosted service lifetime instead of a background thread.
     public sealed class ReportsPushService : BackgroundService
     {
         private readonly ISgcHtmlHub FHub;
+        private readonly ReportsWebHost FHost;
 
-        public ReportsPushService(ISgcHtmlHub aHub)
+        public ReportsPushService(ISgcHtmlHub aHub, ReportsWebHost aHost)
         {
             FHub = aHub;
+            FHost = aHost;
+        }
+
+        // The hub bounds every send (SgcHtmlOptions.SendTimeout) and drops a
+        // browser that stopped reading (a page frozen in the back/forward cache,
+        // a dead link), so a stuck client never blocks this loop.
+        private Task BroadcastAsync(string aHtml, CancellationToken aStoppingToken)
+        {
+            return FHub.BroadcastAsync(aHtml, null, aStoppingToken);
         }
 
         protected override async Task ExecuteAsync(CancellationToken aStoppingToken)
         {
+            int vTick = 0;
             while (!aStoppingToken.IsCancellationRequested)
             {
+                vTick++;
+                try
+                {
+                    if (vTick % 2 == 0)
+                    {
+                        string vLive = FHost.AnalyticsLiveFragment();
+                        if (!string.IsNullOrEmpty(vLive))
+                            await BroadcastAsync(vLive, aStoppingToken)
+                                .ConfigureAwait(false);
+                    }
+                }
+                catch (OperationCanceledException) when (aStoppingToken.IsCancellationRequested)
+                {
+                    break;
+                }
+                catch (Exception E)
+                {
+                    Console.WriteLine("[push] analytics error: " + E.Message);
+                }
+
                 try
                 {
                     string vFragment = TReportsPages.LiveTick();
                     if (vFragment != "")
-                        await FHub.BroadcastAsync(vFragment, null, aStoppingToken)
+                        await BroadcastAsync(vFragment, aStoppingToken)
                             .ConfigureAwait(false);
                 }
-                catch (OperationCanceledException)
+                catch (OperationCanceledException) when (aStoppingToken.IsCancellationRequested)
                 {
                     break;
                 }

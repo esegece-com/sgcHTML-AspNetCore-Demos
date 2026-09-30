@@ -871,6 +871,13 @@ namespace Reports
                 "explore", aActiveMenu);
             AddMenu(oLayout, TReportsI18n.T(aCtx.Lang, "nav.views"), "/views", "views",
                 aActiveMenu);
+            AddHeader(oLayout, TReportsI18n.T(aCtx.Lang, "nav.analytics"));
+            AddMenu(oLayout, TReportsI18n.T(aCtx.Lang, "nav.charts"), "/analytics",
+                "an.charts", aActiveMenu);
+            AddMenu(oLayout, TReportsI18n.T(aCtx.Lang, "nav.market"),
+                "/analytics/market", "an.market", aActiveMenu);
+            AddMenu(oLayout, TReportsI18n.T(aCtx.Lang, "nav.pivotlab"),
+                "/analytics/pivot", "an.pivot", aActiveMenu);
             AddHeader(oLayout, "Automation");
             AddMenu(oLayout, TReportsI18n.T(aCtx.Lang, "nav.schedules"), "/schedules",
                 "schedules", aActiveMenu);
@@ -899,6 +906,9 @@ namespace Reports
             oPalette.AddItem("Pivot builder", "/pivot", "", "Pages");
             oPalette.AddItem("Explore order lines", "/explore", "", "Pages");
             oPalette.AddItem("Saved views", "/views", "", "Pages");
+            oPalette.AddItem("Chart gallery", "/analytics", "", "Pages");
+            oPalette.AddItem("Price candles", "/analytics/market", "", "Pages");
+            oPalette.AddItem("Pivot lab", "/analytics/pivot", "", "Pages");
             oPalette.AddItem("Schedules", "/schedules", "", "Pages");
             oPalette.AddItem("Export jobs", "/jobs", "", "Pages");
             oPalette.AddItem("No REST layer", "/sql", "", "Pages");

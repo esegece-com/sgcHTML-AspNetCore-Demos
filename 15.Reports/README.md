@@ -39,6 +39,18 @@ transaction, so the first launch takes a moment.
 - Saved views, scoped to the signed-in user.
 - Report schedules, runnable on demand.
 - Jobs page: job progress and a log viewer, pushed live over WebSocket.
+- Analytics section:
+  - Chart gallery (`/analytics`): area, mixed bar and line, horizontal bar,
+    stacked, Pareto, waterfall, funnel, radial and bullet charts, PNG export,
+    a clickable region chart that loads the region's top customers into a
+    grid, and a live chart that gets a new point pushed every ~2 seconds.
+  - Price candles (`/analytics/market`): candlestick or OHLC bars with SMA,
+    EMA and Bollinger indicators, volume and crosshair, plus a live tick
+    pushed every ~2 seconds.
+  - Pivot lab (`/analytics/pivot`): expandable pivot with year, quarter or
+    month date groups, heatmap, drill-through to the order lines, a drag and
+    drop field chooser, a linked chart, CSV export and XLSX export (the
+    viewer role gets 403 on XLSX).
 - `/sql` prints the exact SQL statement next to the component it feeds.
 - English, Spanish and German interface.
 
@@ -53,9 +65,10 @@ port, set in `appsettings.json` (default 8104).
 
 | File | Role |
 |---|---|
-| `Program.cs` | App startup, routing, the background push service |
+| `Program.cs` | App startup, routing, the background push service (jobs and analytics live data) |
 | `sgcReportsWebHost.cs` | Request handlers, sessions, cookies |
 | `sgcReports_Pages.cs` | Every page and htmx fragment |
+| `sgcReports_Analytics.cs` | Chart gallery, price candles, pivot lab |
 | `sgcReports_DB.cs` | SQLite schema, seed, report engine, dashboards |
 | `sgcReports_Sessions.cs` | In-memory cookie session store |
 | `sgcReports_Passkeys.cs` | WebAuthn passkey registration and sign-in |

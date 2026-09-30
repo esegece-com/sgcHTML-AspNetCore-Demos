@@ -1,0 +1,13 @@
+@model OrderForm
+@* Returned by GET Edit (into the dialog) and by an invalid POST (swapped in place). *@
+<sgc-form asp-action="Edit" asp-route-id="@Model.Id" hx="true" id="order-form">
+    <sgc-textbox asp-for="Reference" />
+    <sgc-autocomplete asp-for="CustomerId" search-action="Customers_Search"
+                      min-length="2" debounce="250" max-results="10"
+                      placeholder="Type 2 letters of a customer" text="@ViewBag.CustomerName" />
+    <sgc-datepicker asp-for="OrderDate" min="2025-01-01" max="2027-12-31" />
+    <sgc-select asp-for="Status" asp-items="OrderForm.StatusItems" />
+    <sgc-textbox asp-for="Total" />
+    <sgc-checkbox asp-for="Paid" />
+    <sgc-submit text="Save" />
+</sgc-form>

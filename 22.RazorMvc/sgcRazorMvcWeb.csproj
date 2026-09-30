@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Razor MVC demo on ASP.NET Core: the sgcHTML Tag Helpers and fluent helpers
+    (esegece.sgcWebSockets.AspNetCore.Razor) in a classic controllers + views app
+    over an EF Core SQLite database. It is the sgcHTML answer to the Telerik UI
+    for ASP.NET Core / DevExpress MVC grid, form, dialog and chart samples.
+
+    Inside the repo the adapter is referenced as a project (the switch lives in
+    ..\Directory.Build.props); the shipped demo zip uses the NuGet package.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>RazorMvcDemo</RootNamespace>
+    <AssemblyName>sgcRazorMvcWeb</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="8.0.10" />
+  </ItemGroup>
+
+</Project>

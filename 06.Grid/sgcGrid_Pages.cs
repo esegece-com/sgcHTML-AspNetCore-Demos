@@ -122,6 +122,59 @@ namespace GridDemo
                             CS_SALARIES[i]);
         }
 
+        // ------------------------------------------------------------------
+        // Master / Detail
+        // ------------------------------------------------------------------
+
+        // MasterDetail asks the application for the body of every detail row through
+        // OnGetDetailHTML. The detail carries fields that are NOT in the visible
+        // columns (employee id, email, manager), which is what makes it easy to see
+        // that the filter searches the detail too and that sorting never separates a
+        // detail row from the row it belongs to.
+        private static TsgcHTMLContainer DetailField(string aLabel, string aValue)
+        {
+            var oResult = new TsgcHTMLContainer("div");
+            oResult.CSSClass = "col-6 col-md-3 mb-1";
+            var oLabel = new TsgcHTMLContainer("div");
+            oLabel.CSSClass = "text-muted";
+            oLabel.Attributes = @"style=""font-size:0.72rem;""";
+            oLabel.AddText(aLabel);
+            oResult.Add(oLabel);
+            oResult.AddText(aValue);
+            return oResult;
+        }
+
+        private static string EmployeeEmail(string aName)
+        {
+            return aName.Replace(" ", ".").ToLowerInvariant() + "@example.com";
+        }
+
+        private static void GetDetailHTML(object aSender, int aRowIndex, ref string aHTML)
+        {
+            if ((aRowIndex < 0) || (aRowIndex >= CS_EMP_COUNT))
+                return;
+
+            var oBox = new TsgcHTMLContainer("div");
+            oBox.CSSClass = "p-2 bg-light border-start border-3 border-primary small";
+
+            var oTitle = new TsgcHTMLContainer("div");
+            oTitle.CSSClass = "fw-semibold mb-2";
+            oTitle.AddText(CS_NAMES[aRowIndex] + " - employee record");
+            oBox.Add(oTitle);
+
+            var oRow = new TsgcHTMLContainer("div");
+            oRow.CSSClass = "row g-0";
+            oRow.Add(DetailField("Employee ID", "EMP-" +
+                (aRowIndex + 1).ToString("000", CultureInfo.InvariantCulture)));
+            oRow.Add(DetailField("Email", EmployeeEmail(CS_NAMES[aRowIndex])));
+            oRow.Add(DetailField("Reports to", CS_NAMES[(aRowIndex + 3) % CS_EMP_COUNT]));
+            oRow.Add(DetailField("Started",
+                (2019 + (aRowIndex % 6)).ToString(CultureInfo.InvariantCulture)));
+            oBox.Add(oRow);
+
+            aHTML = oBox.HTML;
+        }
+
         private static string WrapFragment(string aTitle, string aDesc, string aGridHTML)
         {
             return @"<div class=""fw-bold mb-1"" style=""font-size:1rem;"">" + aTitle +
@@ -138,6 +191,14 @@ namespace GridDemo
             const string CS_GRID_CSS =
                 ".nav-tabs .nav-link{font-size:0.875rem;padding:0.4rem 0.85rem;}" +
                 "#grid-panel{min-height:300px;}";
+
+            // the sgcHTMX bridge carries the inline edits of the Typed and Live tabs
+            // to the server and the live row pushes back to the browser
+            string vRealtime = @"<script src=""/sgcWebSockets.js""></script>" +
+                @"<script src=""/sgcHTMX.min.js""></script>" +
+                "<script>if(window.sgcHTMX&&sgcHTMX.init){sgcHTMX.init({host:" +
+                @"(location.protocol===""https:""?""wss:"":""ws:"")+""//""+location.host+""/""});}" +
+                "</script>";
 
             string vBasicGrid;
             var oGrid = new TsgcHTMLComponent_Grid();
@@ -200,6 +261,9 @@ namespace GridDemo
                 @" hx-get=""/grid/group"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
                 @" onclick=""setTab(this);return false;"">Group By</a></li>" +
                 @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
+                @" hx-get=""/grid/master-detail"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
+                @" onclick=""setTab(this);return false;"">Master/Detail</a></li>" +
+                @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
                 @" hx-get=""/grid/reorder"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
                 @" onclick=""setTab(this);return false;"">Col Reorder</a></li>" +
                 @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
@@ -207,11 +271,26 @@ namespace GridDemo
                 @" onclick=""setTab(this);return false;"">Pagination</a></li>" +
                 @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
                 @" hx-get=""/grid/scroll"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
-                @" onclick=""setTab(this);return false;"">Virtual Scroll</a></li>" + "</ul>" +
+                @" onclick=""setTab(this);return false;"">Virtual Scroll</a></li>" +
+                @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
+                @" hx-get=""/grid/paging"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
+                @" onclick=""setTab(this);return false;"">Paging &amp; Frozen</a></li>" +
+                @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
+                @" hx-get=""/grid/selection"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
+                @" onclick=""setTab(this);return false;"">Selection</a></li>" +
+                @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
+                @" hx-get=""/grid/typed"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
+                @" onclick=""setTab(this);return false;"">Typed &amp; Edit</a></li>" +
+                @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
+                @" hx-get=""/grid/summaries"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
+                @" onclick=""setTab(this);return false;"">Summaries</a></li>" +
+                @"<li class=""nav-item""><a class=""nav-link"" href=""#""" +
+                @" hx-get=""/grid/live"" hx-target=""#grid-panel"" hx-swap=""innerHTML""" +
+                @" onclick=""setTab(this);return false;"">Keyboard &amp; Live</a></li>" + "</ul>" +
                 @"<div id=""grid-panel"" class=""border border-top-0 rounded-bottom p-3"">" +
                 vBasicGrid + "</div>" + "</div>" + vFooter +
                 @"<script src=""/bootstrap.bundle.min.js""></script>" +
-                @"<script src=""/htmx.min.js""></script>" + "<script>" + "function setTab(el){" +
+                @"<script src=""/htmx.min.js""></script>" + vRealtime + "<script>" + "function setTab(el){" +
                 @"document.querySelectorAll(""#gridTabs .nav-link"").forEach(function(a){a.classList.remove(""active"");});" +
                 @"el.classList.add(""active"");" + "}" + "</script>" + "</body></html>";
         }
@@ -325,6 +404,37 @@ namespace GridDemo
                 AddSortedRows(oGrid);
                 return WrapFragment("Group By",
                     "Rows are grouped by Department with an item count badge. The Delphi server sorts the data and sets <code>GroupByColumn := 'dept'</code> before calling <code>.HTML</code>.",
+                    oGrid.HTML);
+            }
+            finally
+            {
+                oGrid.Dispose();
+            }
+        }
+
+        public static string BuildGridMasterDetail()
+        {
+            var oGrid = new TsgcHTMLComponent_Grid();
+            try
+            {
+                oGrid.Striped = true;
+                oGrid.Hover = true;
+                oGrid.Responsive = true;
+                oGrid.MasterDetail = true;
+                oGrid.ShowSort = true;
+                oGrid.ShowFilter = true;
+                oGrid.TableID = "grid-md";
+                oGrid.OnGetDetailHTML += GetDetailHTML;
+                AddStdColumns(oGrid);
+                AddSampleRows(oGrid);
+                return WrapFragment("Master / Detail",
+                    "Click the arrow on the left of a row to open its detail panel. " +
+                    "<strong>Leave a few of them open</strong> and then sort by Salary, " +
+                    "City or any other column: every detail panel travels with the row it " +
+                    "belongs to and stays open. The filter box searches the detail too, so " +
+                    "typing <code>EMP-007</code> or a manager name finds the row even " +
+                    "though none of the visible columns holds that text, and a detail " +
+                    "panel is never shown on its own without its master row.",
                     oGrid.HTML);
             }
             finally

@@ -6,7 +6,7 @@ updates are composed server side with sgcHTML components, and the ASP.NET Core
 adapter hosts them on Kestrel with Minimal API endpoints. No hand written HTML,
 CSS or JavaScript is needed.
 
-These demos match sgcHTML .NET **2026.10.0** and restore the free Community
+These demos match sgcHTML .NET **2026.10.1** and restore the free Community
 edition, the `esegece.sgcHTML.AspNetCore.Community` package, from nuget.org.
 
 More information, documentation and the commercial editions:

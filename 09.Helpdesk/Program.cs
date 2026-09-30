@@ -26,6 +26,16 @@
 //      ASP.NET Core IFormFile (ctx.Request.Form.Files) instead of the 60.HTML
 //      hand-rolled multipart parser; the files are persisted by the reused
 //      THelpdeskAttachStore and the attachment download streams via Results.File.
+//    - KANBAN (admin ticket list, tickets #1154 / #1155): /tickets/kanban-move,
+//      /tickets/kanban-add and /tickets/kanban-edit (GET + POST) are Minimal API
+//      endpoints over the same handlers as the 60.HTML host. The board's live sync
+//      bridge (sgcHTMX.min.js) opens a plain WebSocket on the page URL '/'; the
+//      middleware below accepts that upgrade itself and passes the HttpContext to
+//      the host, which reads the session cookie from the upgrade request and pushes
+//      card fragments to admin boards only (the 60.HTML host captured the cookie in
+//      OnHandshake for the same purpose). /sgcWebSockets.js is served from the
+//      esegece.sgcHTML assembly manifest (the adapter registry serves htmx.min.js
+//      and sgcHTMX.min.js by file name).
 //
 //  IMPORTANT hosting note (the reusable pattern): a Minimal API lambda whose ONLY
 //  parameter is HttpContext and which returns Task<IResult> is treated as a raw
@@ -38,12 +48,14 @@
 
 using System;
 using System.IO;
+using System.Reflection;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 // sgc
+using esegece.sgcWebSockets;
 using esegece.sgcWebSockets.AspNetCore;
 using Helpdesk;
 
@@ -81,12 +93,21 @@ if (!string.IsNullOrEmpty(vKestrelUrl))
 
 // The app renders its own pages, so the adapter serves assets + the WebSocket
 // channel only (ServeRootPage = false hands page routing back to the pipeline).
-builder.Services.AddSgcHtml(o => o.ServeRootPage = false);
+// Kanban live sync: the board's sgcHTMX bridge connects to ws(s)://host/ (the page
+// URL), so the adapter accepts the channel on any path; the hub keeps the session
+// cookie of each upgrade and the host pushes card fragments only to admin browsers
+// (a filtered ISgcHtmlHub.BroadcastAsync).
+builder.Services.AddSgcHtml(o =>
+{
+    o.ServeRootPage = false;
+    o.AcceptWebSocketOnAnyPath = true;
+});
 
 // The host owns the reused singletons (DB pool, session store, page builder,
 // attachment store). Constructed once at startup below; DI disposes it (and the
 // DB pool) on shutdown.
-builder.Services.AddSingleton(sp => new HelpdeskWebHost(oConfig, vDbPath, vStorageRoot, vPort));
+builder.Services.AddSingleton(sp => new HelpdeskWebHost(oConfig, vDbPath, vStorageRoot, vPort,
+    sp.GetRequiredService<ISgcHtmlHub>()));
 
 var app = builder.Build();
 
@@ -95,7 +116,8 @@ var app = builder.Build();
 var host = app.Services.GetRequiredService<HelpdeskWebHost>();
 
 app.UseWebSockets();   // REQUIRED before UseSgcHtml
-app.UseSgcHtml();      // serves Bootstrap assets + manifest + sw + /ws
+
+app.UseSgcHtml();      // serves Bootstrap / htmx assets + manifest + sw + /ws
 
 // ----- endpoint helpers (see the IMPORTANT hosting note above) ----- //
 
@@ -125,6 +147,17 @@ app.MapGet("/favicon.svg", (HttpContext ctx) => Run(ctx, () =>
     return Results.Content(HelpdeskWebHost.CS_FAVICON_SVG, "image/svg+xml");
 }));
 
+// The Kanban board links /sgcWebSockets.js, which the adapter registry does NOT
+// serve (it is embedded in the esegece.sgcHTML assembly), so it is served here
+// straight from the manifest by its logical name.
+app.MapGet("/sgcWebSockets.js", () =>
+{
+    string vBody = GetEmbeddedAsset("sgcWebSockets.js");
+    return vBody == ""
+        ? Results.NotFound()
+        : Results.Content(vBody, "application/javascript; charset=utf-8");
+});
+
 // Health check (public).
 app.MapGet("/healthz", () => Results.Text("ok", "text/plain; charset=utf-8"));
 
@@ -152,6 +185,16 @@ app.MapPost("/tickets/new",
 app.MapGet("/tickets/export.csv",
     (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.TicketsExportCsvGet(ctx, s))));
 
+// ----- admin Kanban board (literal routes beat /tickets/{id}) ----- //
+app.MapPost("/tickets/kanban-move",
+    (HttpContext ctx) => RunForm(ctx, f => host.Guarded(ctx, s => host.TicketKanbanMovePost(ctx, f, s))));
+app.MapPost("/tickets/kanban-add",
+    (HttpContext ctx) => RunForm(ctx, f => host.Guarded(ctx, s => host.TicketKanbanAddPost(ctx, f, s))));
+app.MapGet("/tickets/kanban-edit",
+    (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.TicketKanbanEditGet(ctx, s))));
+app.MapPost("/tickets/kanban-edit",
+    (HttpContext ctx) => RunForm(ctx, f => host.Guarded(ctx, s => host.TicketKanbanEditPost(ctx, f, s))));
+
 // ----- /tickets/{id}[/reply|/close|/reopen|/files/{attId}] ----- //
 app.MapGet("/tickets/{id}",
     (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.TicketDetailGet(ctx, s))));
@@ -160,8 +203,27 @@ app.MapPost("/tickets/{id}/reply",
 app.MapPost("/tickets/{id}/close",
     (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.TicketStatusPost(ctx, s, "closed", "closed"))));
 app.MapPost("/tickets/{id}/reopen",
-    (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.TicketStatusPost(ctx, s, "open", "reopened"))));
+    (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.TicketStatusPost(ctx, s, "new", "reopened"))));
 app.MapGet("/tickets/{id}/files/{attId}",
     (HttpContext ctx) => Run(ctx, () => host.Guarded(ctx, s => host.TicketFileGet(ctx, s))));
 
 app.Run();
+
+// Reads an asset embedded in the esegece.sgcHTML assembly by its logical name.
+static string GetEmbeddedAsset(string aFileName)
+{
+    try
+    {
+        Assembly oAsm = typeof(TsgcHTMX_Engine_Server).Assembly;
+        using Stream oStream = oAsm.GetManifestResourceStream(
+            "esegece.sgcWebSockets.html." + aFileName);
+        if (oStream == null)
+            return "";
+        using StreamReader oReader = new StreamReader(oStream);
+        return oReader.ReadToEnd();
+    }
+    catch
+    {
+        return "";
+    }
+}

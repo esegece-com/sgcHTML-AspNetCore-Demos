@@ -32,7 +32,7 @@ namespace Helpdesk
         public DateTime CreatedAt;
     }
 
-    // Status = "open" | "closed"
+    // Status = "new" | "pending_resolution" | "pending_feedback" | "closed"
     public class THelpdeskTicket
     {
         public long Id;
@@ -40,6 +40,10 @@ namespace Helpdesk
         public string Username = ""; // owner display name, joined in for list/detail views
         public string Subject = "";
         public string Status = "";
+        // "low" | "medium" | "high" | "critical" (Kanban swimlane + SLA due date)
+        public string Priority = "";
+        // "general" | "account" | "billing" | "technical" (Kanban card tag)
+        public string Category = "";
         public DateTime CreatedAt;
         public DateTime UpdatedAt;
     }

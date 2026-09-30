@@ -24,6 +24,13 @@
 //      content-type + filename.
 //    - The IDOR ticket-ownership check (a user may only see / act on their own
 //      tickets unless admin) is preserved on EVERY ticket route, byte-for-byte.
+//    - KANBAN LIVE PUSH: the 60.HTML host remembered the session cookie of every
+//      WebSocket from its OnHandshake headers and wrote card fragments to the
+//      admin ones over FHTTP. Here the board's sgcHTMX bridge WebSocket (opened on
+//      the page URL '/') is accepted by the adapter (AcceptWebSocketOnAnyPath),
+//      which keeps the upgrade cookies with each connection, and
+//      PushKanbanFragment broadcasts through ISgcHtmlHub with a filter that
+//      admits only the connections whose session is (still) an admin one.
 //
 //  The three host files that were NOT copied from 60.HTML are sgcHelpdesk_Server.cs
 //  (the TsgcWebSocketHTTPServer host), the console Program.cs, and
@@ -43,8 +50,13 @@ using System.Globalization;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Primitives;
+// sgc
+using esegece.sgcWebSockets;
+using esegece.sgcWebSockets.AspNetCore;
 
 namespace Helpdesk
 {
@@ -78,13 +90,17 @@ namespace Helpdesk
         private readonly THelpdeskAttachStore FAttachStore;
         private readonly int FListenPort;
         private readonly DateTime FStartedAt;
+        // Kanban live sync: the adapter hub, which keeps the upgrade cookies of
+        // every board WebSocket (the Kestrel counterpart of FWSSessionTokens).
+        private readonly ISgcHtmlHub FHub;
 
         // Builds the DB (schema + admin seed + demo data), the session store, the
         // page builder and the attachment store - mirroring TsgcHelpdeskServer.Start
         // / InitRuntime.
         public HelpdeskWebHost(THelpdeskServerConfig aConfig, string aDatabasePath,
-            string aStorageRoot, int aListenPort)
+            string aStorageRoot, int aListenPort, ISgcHtmlHub aHub)
         {
+            FHub = aHub;
             FListenPort = aListenPort;
             FStartedAt = DateTime.Now;
 
@@ -97,6 +113,8 @@ namespace Helpdesk
 
             FSessions = new THelpdeskSessionStore(480, true);
             FPages = new THelpdeskPages();
+            // the page WebSocket (Program.cs) carries the live board changes
+            FPages.LiveSync = true;
             FAttachStore = new THelpdeskAttachStore(aStorageRoot);
         }
 
@@ -592,7 +610,8 @@ namespace Helpdesk
             if (!vIsAdmin && !vIsOwner)
                 return Redirect("/"); // IDOR: not the owner and not staff.
 
-            if (!string.Equals(vTicket.Status, "open", StringComparison.OrdinalIgnoreCase))
+            // Replies are allowed on any non-closed ticket (new / pending_* / etc).
+            if (string.Equals(vTicket.Status, "closed", StringComparison.OrdinalIgnoreCase))
                 return Redirect("/tickets/" + vTicketId.ToString(CultureInfo.InvariantCulture));
 
             string vBody = GetParam(aCtx, aForm, "body").Trim();
@@ -646,6 +665,177 @@ namespace Helpdesk
             FDB.SetTicketStatus(vTicketId, aNewStatus);
             return Redirect("/tickets/" + vTicketId.ToString(CultureInfo.InvariantCulture) +
                 "?flash=" + aFlashCode);
+        }
+
+        // ----- Kanban board (admin) ----- //
+
+        private static bool IsAdmin(THelpdeskSession aSession)
+        {
+            return string.Equals(aSession.Role, "admin", StringComparison.OrdinalIgnoreCase);
+        }
+
+        // POST /tickets/kanban-move: admin drag-drop, sets a ticket's status from id +
+        // status in the body (and the priority from the swimlane).
+        public IResult TicketKanbanMovePost(HttpContext aCtx, IFormCollection aForm,
+            THelpdeskSession aSession)
+        {
+            // Admin only: the Kanban board is shown on the admin ticket list.
+            if (!IsAdmin(aSession))
+                return Html(403, "forbidden");
+
+            // the board posts the card element id ("tk" + ticket id)
+            long vTicketId;
+            if (!THelpdeskPages.KanbanTicketId(GetParam(aCtx, aForm, "id"), out vTicketId))
+                return Html(400, "invalid id");
+
+            string vStatus = GetParam(aCtx, aForm, "status").Trim().ToLowerInvariant();
+            // with swimlanes the drop also posts the destination lane (= priority)
+            string vLane = GetParam(aCtx, aForm, "swimlane").Trim().ToLowerInvariant();
+            THelpdeskTicket oTicket;
+            if (!FDB.GetTicket(vTicketId, out oTicket))
+                return Html(404, "not found");
+
+            // The board blocks moves outside the column AllowedTargets in the browser,
+            // but that is a convenience only: every drop is validated here too. A non
+            // 2xx answer makes the board reload, putting the card back.
+            if (!THelpdeskPages.KanbanMoveAllowed(oTicket.Status, vStatus))
+                return Html(409, "move not allowed");
+            if (vLane != "" && THelpdeskDBPool.NormalizePriority(vLane) != vLane)
+                return Html(400, "invalid swimlane");
+
+            if (!string.Equals(oTicket.Status, vStatus, StringComparison.OrdinalIgnoreCase))
+                FDB.SetTicketStatus(vTicketId, vStatus);
+            if (vLane != "" && vLane != oTicket.Priority)
+                FDB.SetTicketPriority(vTicketId, vLane);
+            // move the card on every other open board
+            PushKanbanFragment(BuildKanbanFragment(vTicketId, true));
+            return Html(200, "ok");
+        }
+
+        // POST /tickets/kanban-add: admin quick add (QuickAddURL), creates a ticket
+        // from title + column (+ swimlane = priority) and answers the card fragment.
+        public IResult TicketKanbanAddPost(HttpContext aCtx, IFormCollection aForm,
+            THelpdeskSession aSession)
+        {
+            if (!IsAdmin(aSession))
+                return Html(403, "forbidden");
+            string vTitle = GetParam(aCtx, aForm, "title").Trim();
+            string vColumn = GetParam(aCtx, aForm, "column").Trim().ToLowerInvariant();
+            string vLane = GetParam(aCtx, aForm, "swimlane").Trim().ToLowerInvariant();
+            if (vTitle == "" || vTitle.Length > 200)
+                return Html(400, "invalid title");
+            // a ticket is closed only from Pending Feedback, never created closed
+            if (!THelpdeskPages.KanbanColumnValid(vColumn) || vColumn == "closed")
+                return Html(409, "column not allowed");
+            if (vLane != "" && THelpdeskDBPool.NormalizePriority(vLane) != vLane)
+                return Html(400, "invalid swimlane");
+
+            long vMessageId;
+            long vTicketId = FDB.CreateTicket(aSession.UserId, vTitle, "", out vMessageId);
+            if (vTicketId <= 0)
+                return Html(500, "not created");
+            if (vColumn != "new")
+                FDB.SetTicketStatus(vTicketId, vColumn);
+            if (vLane != "")
+                FDB.SetTicketPriority(vTicketId, vLane);
+
+            // The move fragment (remove + insert) is idempotent, so the browser that
+            // added the card can apply both this answer and the live push.
+            string vFragment = BuildKanbanFragment(vTicketId, true);
+            PushKanbanFragment(vFragment);
+            return Html(200, vFragment);
+        }
+
+        // GET /tickets/kanban-edit: admin edit dialog (EditURL) form.
+        public IResult TicketKanbanEditGet(HttpContext aCtx, THelpdeskSession aSession)
+        {
+            if (!IsAdmin(aSession))
+                return Html(403, "forbidden");
+            long vTicketId;
+            THelpdeskTicket oTicket = null;
+            if (!THelpdeskPages.KanbanTicketId(GetParam(aCtx, null, "id"), out vTicketId) ||
+                !FDB.GetTicket(vTicketId, out oTicket))
+                return Html(404, "not found");
+            return Html(200, FPages.BuildKanbanEditForm(oTicket, false));
+        }
+
+        // POST /tickets/kanban-edit: saves the dialog and answers the form plus the
+        // card fragment.
+        public IResult TicketKanbanEditPost(HttpContext aCtx, IFormCollection aForm,
+            THelpdeskSession aSession)
+        {
+            if (!IsAdmin(aSession))
+                return Html(403, "forbidden");
+            long vTicketId;
+            THelpdeskTicket oTicket = null;
+            if (!THelpdeskPages.KanbanTicketId(GetParam(aCtx, aForm, "id"), out vTicketId) ||
+                !FDB.GetTicket(vTicketId, out oTicket))
+                return Html(404, "not found");
+            string vSubject = GetParam(aCtx, aForm, "subject").Trim();
+            if (vSubject == "" || vSubject.Length > 200)
+            {
+                // answered 200 so htmx swaps the form back in with the error
+                return Html(200, FPages.BuildKanbanEditForm(oTicket, false,
+                    "The subject is required (200 characters max)."));
+            }
+
+            FDB.UpdateTicketDetails(vTicketId, vSubject, GetParam(aCtx, aForm, "priority"),
+                GetParam(aCtx, aForm, "category"));
+            THelpdeskTicket oSaved;
+            if (!FDB.GetTicket(vTicketId, out oSaved))
+                oSaved = oTicket;
+            // a new priority means a new swimlane: move the card, else re-render it
+            string vFragment = BuildKanbanFragment(vTicketId, oSaved.Priority != oTicket.Priority);
+            PushKanbanFragment(vFragment);
+            return Html(200, FPages.BuildKanbanEditForm(oSaved, true) + vFragment);
+        }
+
+        // htmx out-of-band fragment of a ticket card, built from the same board the
+        // list page renders: aMove = remove + insert into the ticket's column,
+        // otherwise an in-place re-render.
+        private string BuildKanbanFragment(long aTicketId, bool aMove)
+        {
+            THelpdeskTicket oTicket;
+            if (!FDB.GetTicket(aTicketId, out oTicket))
+                return "";
+            // the same board (columns, lanes, card mapping) the list page renders
+            TsgcHTMLComponent_KanbanBoard oBoard = FPages.CreateTicketBoard(FDB.ListAllTickets(""));
+            if (aMove)
+            {
+                string vColumn = oTicket.Status.ToLowerInvariant();
+                if (!THelpdeskPages.KanbanColumnValid(vColumn))
+                    vColumn = "new";
+                return oBoard.GetCardMoveFragmentHTML(THelpdeskPages.KanbanCardID(aTicketId),
+                    vColumn);
+            }
+            return oBoard.GetCardFragmentHTML(THelpdeskPages.KanbanCardID(aTicketId));
+        }
+
+        // Sends a card fragment to every board open by an admin over the WebSocket
+        // (the sgcHTMX bridge applies it): ticket data never reaches anybody else.
+        // The session is checked at push time from the cookie of the upgrade
+        // request: a signed-out or non-admin browser gets nothing. The hub bounds
+        // every send (SendTimeout) and drops a client that stopped reading.
+        private void PushKanbanFragment(string aHTML)
+        {
+            if (string.IsNullOrEmpty(aHTML))
+                return;
+            try
+            {
+                FHub.BroadcastAsync(IsAdminConnection, aHTML).GetAwaiter().GetResult();
+            }
+            catch (Exception)
+            {
+                // ignore: a connection is closing concurrently
+            }
+        }
+
+        private bool IsAdminConnection(SgcHtmlConnection aConnection)
+        {
+            string vToken;
+            THelpdeskSession oSession;
+            return aConnection.Cookies.TryGetValue(CS_HELPDESK_SESSION, out vToken) &&
+                vToken != "" && FSessions.TryGet(vToken, out oSession) && IsAdmin(oSession);
         }
 
         // ----- attachment download (IDOR-guarded) ----- //

@@ -6,8 +6,8 @@
 
     The 60.HTML version hosts a TsgcWebSocketHTTPServer and renders every page in
     DispatchRequest. This mirror keeps the SAME reusable logic
-    (sgcReports_Bcrypt.cs, sgcReports_Config.cs, sgcReports_DB.cs,
-    sgcReports_I18n.cs, sgcReports_Pages.cs, sgcReports_Passkeys.cs,
+    (sgcReports_Analytics.cs, sgcReports_Bcrypt.cs, sgcReports_Config.cs,
+    sgcReports_DB.cs, sgcReports_I18n.cs, sgcReports_Pages.cs, sgcReports_Passkeys.cs,
     sgcReports_Sessions.cs and sgcReports_Types.cs are copied VERBATIM) but hosts
     it on Kestrel: the ASP.NET Core adapter serves the built-in client assets
     (Bootstrap / Chart.js / htmx, all by file name) and the htmx WebSocket

@@ -1,0 +1,30 @@
+@model DashboardModel
+@{
+    ViewData["Title"] = "Dashboard";
+}
+<h1 class="h3 mb-3">Dashboard</h1>
+<div class="row g-4">
+    <div class="col-lg-12">
+        <h2 class="h5">Sales by month (static, from the database)</h2>
+        <sgc-chart name="sales" type="bar" height="280" labels="Model.Months">
+            <sgc-series name="Sales" data="Model.Sales" color="#0d6efd" />
+            <sgc-series name="Orders" data="Model.Orders" color="#fd7e14" type="line" />
+        </sgc-chart>
+    </div>
+    <div class="col-lg-6">
+        <h2 class="h5">Orders by status (polled every 5 s)</h2>
+        @* The first data renders with the page, then ByStatus answers every poll. *@
+        <sgc-chart name="by-status" type="bar" height="260" labels="ShopSeeder.Statuses"
+                   refresh-action="ByStatus" refresh-every="5s">
+            <sgc-series name="Orders" data="Model.ByStatus" color="#198754" />
+        </sgc-chart>
+    </div>
+    <div class="col-lg-6">
+        <h2 class="h5">Orders per second (live, pushed over WebSocket)</h2>
+        @* LiveSalesFeed calls hub.BroadcastChartAsync("live-orders", ...) every second. *@
+        @(Html.Sgc().Chart("live-orders").Type("line").Height(260)
+            .Labels("")
+            .Series("Orders / s", new double[] { 0 }, "#dc3545")
+            .Live())
+    </div>
+</div>

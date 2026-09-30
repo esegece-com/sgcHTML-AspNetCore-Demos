@@ -20,6 +20,264 @@ namespace Helpdesk
     // shell (a top navbar + footer) built by BuildPageShell.
     public class THelpdeskPages
     {
+        public const string CS_KANBAN_BOARD_ID = "hdKanban";
+
+        // Kanban pipeline columns, in display order: status code + display label.
+        private static readonly string[] CS_KANBAN_COLS = { "new", "pending_resolution",
+            "pending_feedback", "closed" };
+        private static readonly string[] CS_KANBAN_LABELS = { "New", "Pending Resolution",
+            "Pending Feedback", "Closed" };
+        // AllowedTargets of each column (same order). A ticket is closed only once
+        // the customer confirmed the fix (Pending Feedback), and a closed ticket
+        // can only be reopened into Pending Resolution.
+        private static readonly string[] CS_KANBAN_TARGETS = { "pending_resolution",
+            "new,pending_feedback", "pending_resolution,closed", "pending_resolution" };
+        // Swimlanes = ticket priority.
+        private static readonly string[] CS_KANBAN_LANES = { "critical", "high", "medium",
+            "low" };
+        private static readonly string[] CS_KANBAN_LANE_LABELS = { "Critical", "High",
+            "Medium", "Low" };
+        // SLA: days from creation to the due date, per priority (same order).
+        private static readonly int[] CS_KANBAN_SLA_DAYS = { 1, 2, 5, 10 };
+        // Work-in-progress limit of Pending Resolution (per swimlane cell).
+        private const int CS_KANBAN_WIP_LIMIT = 2;
+        private static readonly string[] CS_CATEGORIES = { "general", "account",
+            "billing", "technical" };
+        private static readonly string[] CS_CATEGORY_LABELS = { "General", "Account",
+            "Billing", "Technical" };
+
+        // True when the server pushes board changes to every open board over the
+        // WebSocket (the board then loads the sgcHTMX bridge).
+        public bool LiveSync { get; set; }
+
+        private static int KanbanColumnIndex(string aColumn)
+        {
+            string vColumn = (aColumn ?? "").Trim();
+            for (int i = 0; i < CS_KANBAN_COLS.Length; i++)
+                if (string.Equals(CS_KANBAN_COLS[i], vColumn, StringComparison.OrdinalIgnoreCase))
+                    return i;
+            return -1;
+        }
+
+        // Workflow rules of the board, shared by the board markup (AllowedTargets)
+        // and the server-side validation of every drop.
+        public static bool KanbanColumnValid(string aColumn)
+        {
+            return KanbanColumnIndex(aColumn) >= 0;
+        }
+
+        public static bool KanbanMoveAllowed(string aFrom, string aTo)
+        {
+            if (!KanbanColumnValid(aTo))
+                return false;
+            int vFrom = KanbanColumnIndex(aFrom);
+            // legacy / unknown status values live in the New column
+            if (vFrom < 0)
+                vFrom = 0;
+            if (string.Equals(CS_KANBAN_COLS[vFrom], aTo, StringComparison.OrdinalIgnoreCase))
+                return true;
+            return ("," + CS_KANBAN_TARGETS[vFrom] + ",").IndexOf(
+                "," + (aTo ?? "").Trim().ToLowerInvariant() + ",", StringComparison.Ordinal) >= 0;
+        }
+
+        // Card element id of a ticket ("tk" + id). htmx 2 locates out-of-band
+        // targets with a '#id' CSS selector, which cannot start with a digit, so the
+        // bare ticket id is not used. KanbanTicketId accepts both forms (drag POST,
+        // edit dialog).
+        public static string KanbanCardID(long aTicketId)
+        {
+            return "tk" + aTicketId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        public static bool KanbanTicketId(string aValue, out long aTicketId)
+        {
+            string vValue = (aValue ?? "").Trim().ToLowerInvariant();
+            if (vValue.StartsWith("tk", StringComparison.Ordinal))
+                vValue = vValue.Substring(2);
+            return long.TryParse(vValue, NumberStyles.Integer, CultureInfo.InvariantCulture,
+                out aTicketId) && aTicketId > 0;
+        }
+
+        private static int KanbanLaneIndex(string aPriority)
+        {
+            int vResult = 2; // medium
+            for (int i = 0; i < CS_KANBAN_LANES.Length; i++)
+                if (string.Equals(CS_KANBAN_LANES[i], aPriority, StringComparison.OrdinalIgnoreCase))
+                    vResult = i;
+            return vResult;
+        }
+
+        // Maps the demo ticket onto a board card: priority -> swimlane + dot,
+        // category -> tag, owner -> initials, SLA due date (open tickets only).
+        private static void FillKanbanCard(TsgcHTMLKanbanCard oCard, THelpdeskTicket aTicket)
+        {
+            int vLane = KanbanLaneIndex(aTicket.Priority);
+            oCard.CardID = KanbanCardID(aTicket.Id);
+            oCard.Title = "#" + aTicket.Id.ToString(CultureInfo.InvariantCulture);
+            oCard.Description = aTicket.Subject;
+            oCard.Assignee = aTicket.Username;
+            oCard.Color = TsgcHTMLColor.hcLight;
+            oCard.SwimlaneID = CS_KANBAN_LANES[vLane];
+            switch (vLane)
+            {
+                case 0: oCard.Priority = TsgcHTMLKanbanPriority.kpCritical; break;
+                case 1: oCard.Priority = TsgcHTMLKanbanPriority.kpHigh; break;
+                case 3: oCard.Priority = TsgcHTMLKanbanPriority.kpLow; break;
+                default: oCard.Priority = TsgcHTMLKanbanPriority.kpMedium; break;
+            }
+            TsgcHTMLKanbanTag oTag = oCard.Tags.Add();
+            oTag.Text = CS_CATEGORY_LABELS[0];
+            for (int i = 0; i < CS_CATEGORIES.Length; i++)
+                if (string.Equals(CS_CATEGORIES[i], aTicket.Category, StringComparison.OrdinalIgnoreCase))
+                    oTag.Text = CS_CATEGORY_LABELS[i];
+            if (string.Equals(aTicket.Category, "billing", StringComparison.OrdinalIgnoreCase))
+                oTag.Style = TsgcHTMLBadgeStyle.bgWarning;
+            else if (string.Equals(aTicket.Category, "technical", StringComparison.OrdinalIgnoreCase))
+                oTag.Style = TsgcHTMLBadgeStyle.bgInfo;
+            else if (string.Equals(aTicket.Category, "account", StringComparison.OrdinalIgnoreCase))
+                oTag.Style = TsgcHTMLBadgeStyle.bgPrimary;
+            // the due date (SLA) only matters while the ticket is open
+            if (!string.Equals(aTicket.Status, "closed", StringComparison.OrdinalIgnoreCase))
+                oCard.DueDate = aTicket.CreatedAt.AddDays(CS_KANBAN_SLA_DAYS[vLane])
+                    .ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+        }
+
+        // --- Kanban board (admin ticket list) --- //
+
+        // The configured ticket board filled from aRows. The list page renders it
+        // and the server builds the card fragments of the live updates from it.
+        public TsgcHTMLComponent_KanbanBoard CreateTicketBoard(THelpdeskTicket[] aRows)
+        {
+            var vResult = new TsgcHTMLComponent_KanbanBoard();
+            vResult.BoardID = CS_KANBAN_BOARD_ID;
+            vResult.CSSHeight = "70vh";
+            vResult.IncludeCSS = true;
+            // drag a card to change its status (column) or priority (swimlane)
+            vResult.DragEnabled = true;
+            vResult.DragUpdateURL = "/tickets/kanban-move";
+            vResult.ShowCardCount = true;
+            vResult.CollapsibleColumns = true;
+            vResult.ShowSearch = true;
+            vResult.SearchPlaceholder = "Search tickets";
+            // "+" form at the bottom of every column / lane cell
+            vResult.QuickAdd = true;
+            vResult.QuickAddURL = "/tickets/kanban-add";
+            vResult.QuickAddText = "New ticket";
+            // clicking a card opens the edit dialog
+            vResult.EditURL = "/tickets/kanban-edit";
+            vResult.ShowAssigneeInitials = true;
+            vResult.LiveSync = LiveSync;
+
+            for (int vI = 0; vI < CS_KANBAN_LANES.Length; vI++)
+            {
+                TsgcHTMLKanbanSwimlane oLane = vResult.Swimlanes.Add();
+                oLane.SwimlaneID = CS_KANBAN_LANES[vI];
+                oLane.Title = CS_KANBAN_LANE_LABELS[vI];
+            }
+
+            for (int vColIdx = 0; vColIdx < CS_KANBAN_COLS.Length; vColIdx++)
+            {
+                TsgcHTMLKanbanColumn oCol;
+                switch (vColIdx)
+                {
+                    case 0: oCol = vResult.AddColumn(CS_KANBAN_LABELS[vColIdx], TsgcHTMLColor.hcPrimary); break;
+                    case 1: oCol = vResult.AddColumn(CS_KANBAN_LABELS[vColIdx], TsgcHTMLColor.hcInfo); break;
+                    case 2: oCol = vResult.AddColumn(CS_KANBAN_LABELS[vColIdx], TsgcHTMLColor.hcWarning); break;
+                    default: oCol = vResult.AddColumn(CS_KANBAN_LABELS[vColIdx], TsgcHTMLColor.hcSecondary); break;
+                }
+                oCol.ColumnID = CS_KANBAN_COLS[vColIdx];
+                oCol.AllowedTargets = CS_KANBAN_TARGETS[vColIdx];
+                if (vColIdx == 1)
+                    oCol.WIPLimit = CS_KANBAN_WIP_LIMIT;
+                // the server refuses new tickets straight into Closed
+                if (vColIdx == 3)
+                    oCol.QuickAdd = false;
+            }
+
+            for (int vI = 0; vI < aRows.Length; vI++)
+            {
+                // unknown / legacy status values go to New
+                int vColIdx = KanbanColumnIndex(aRows[vI].Status);
+                if (vColIdx < 0)
+                    vColIdx = 0;
+                FillKanbanCard(vResult.Columns[vColIdx].Cards.Add(), aRows[vI]);
+            }
+            return vResult;
+        }
+
+        // Body of the board's edit dialog (EditURL): subject, priority and
+        // category of aTicket. aSaved shows a confirmation above the form.
+        public string BuildKanbanEditForm(THelpdeskTicket aTicket, bool aSaved,
+            string aError = "")
+        {
+            var oRoot = new TsgcHTMLNodeList();
+            if (aSaved)
+            {
+                var oAlert = new TsgcHTMLAlert("Ticket saved.");
+                oAlert.Style = TsgcHTMLAlertStyle.asSuccess;
+                oRoot.Add(oAlert);
+            }
+            if (aError != "")
+            {
+                var oAlert = new TsgcHTMLAlert(aError);
+                oAlert.Style = TsgcHTMLAlertStyle.asDanger;
+                oRoot.Add(oAlert);
+            }
+
+            // the answer replaces the dialog body; the saved card is re-rendered by
+            // the out-of-band fragment that comes with it
+            var oForm = new TsgcHTMLForm();
+            oForm.Method = "POST";
+            oForm.Attributes = "hx-post=\"/tickets/kanban-edit\" hx-target=\"#" +
+                CS_KANBAN_BOARD_ID + "_edit_body\" hx-swap=\"innerHTML\"";
+            oForm.AddHidden("id", aTicket.Id.ToString(CultureInfo.InvariantCulture));
+
+            var oField = new TsgcHTMLField(TsgcHTMLInputType.itText, "subject");
+            oField.FieldID = "hdEditSubject";
+            oField.Label_ = "Subject";
+            oField.Value = aTicket.Subject;
+            oField.Required = true;
+            oField.MaxLength = 200;
+            oField.ColClass = "mb-3";
+            oForm.Add(oField);
+
+            var oSelect = new TsgcHTMLSelect();
+            oSelect.FieldID = "hdEditPriority";
+            oSelect.Name = "priority";
+            oSelect.Label_ = "Priority";
+            oSelect.CSSClass = "form-select";
+            oSelect.ColClass = "mb-3";
+            for (int vI = 0; vI < CS_KANBAN_LANES.Length; vI++)
+                oSelect.AddOption(CS_KANBAN_LANES[vI], CS_KANBAN_LANE_LABELS[vI],
+                    string.Equals(CS_KANBAN_LANES[vI], aTicket.Priority, StringComparison.OrdinalIgnoreCase));
+            oForm.Add(oSelect);
+
+            oSelect = new TsgcHTMLSelect();
+            oSelect.FieldID = "hdEditCategory";
+            oSelect.Name = "category";
+            oSelect.Label_ = "Category";
+            oSelect.CSSClass = "form-select";
+            oSelect.ColClass = "mb-3";
+            for (int vI = 0; vI < CS_CATEGORIES.Length; vI++)
+                oSelect.AddOption(CS_CATEGORIES[vI], CS_CATEGORY_LABELS[vI],
+                    string.Equals(CS_CATEGORIES[vI], aTicket.Category, StringComparison.OrdinalIgnoreCase));
+            oForm.Add(oSelect);
+
+            var oBar = new TsgcHTMLContainer("div");
+            oBar.CSSClass = "d-flex gap-2 align-items-center";
+            var oBtn = new TsgcHTMLButton("Save", TsgcHTMLButtonStyle.bsPrimary);
+            oBtn.ButtonType = "submit";
+            oBar.Add(oBtn);
+            var oLink = new TsgcHTMLLink("/tickets/" + aTicket.Id.ToString(CultureInfo.InvariantCulture),
+                "Open ticket #" + aTicket.Id.ToString(CultureInfo.InvariantCulture));
+            oLink.CSSClass = "btn btn-link";
+            oBar.Add(oLink);
+            oForm.Add(oBar);
+            oRoot.Add(oForm);
+
+            return oRoot.HTML;
+        }
+
         // Self-contained inline logo (brand mark + wordmark), centered above the
         // "Helpdesk" heading on the sign-in card.
         private const string CS_LOGO_SVG = "<svg xmlns=\"http://www.w3.org/2000/svg\" " +
@@ -108,9 +366,14 @@ namespace Helpdesk
         // Status as a coloured Bootstrap badge pill.
         private static string StatusBadge(string aStatus)
         {
-            if (string.Equals(aStatus, "closed", StringComparison.OrdinalIgnoreCase))
+            string vStatus = (aStatus ?? "").Trim().ToLowerInvariant();
+            if (vStatus == "closed")
                 return TsgcHTMLComponent_Badge.Build("Closed", TsgcHTMLBadgeStyle.bgSecondary, true);
-            return TsgcHTMLComponent_Badge.Build("Open", TsgcHTMLBadgeStyle.bgSuccess, true);
+            if (vStatus == "pending_resolution")
+                return TsgcHTMLComponent_Badge.Build("Pending Resolution", TsgcHTMLBadgeStyle.bgInfo, true);
+            if (vStatus == "pending_feedback")
+                return TsgcHTMLComponent_Badge.Build("Pending Feedback", TsgcHTMLBadgeStyle.bgWarning, true);
+            return TsgcHTMLComponent_Badge.Build("New", TsgcHTMLBadgeStyle.bgPrimary, true);
         }
 
         // Maps a flash-message code to its display text. Blank/unknown -> "".
@@ -573,7 +836,9 @@ namespace Helpdesk
                 };
 
                 addFilterOption("all", "All statuses");
-                addFilterOption("open", "Open");
+                addFilterOption("new", "New");
+                addFilterOption("pending_resolution", "Pending Resolution");
+                addFilterOption("pending_feedback", "Pending Feedback");
                 addFilterOption("closed", "Closed");
                 oFilterCol.Add(oFilterSelect);
                 oFilterRow.Add(oFilterCol);
@@ -677,8 +942,96 @@ namespace Helpdesk
                 }
             }
 
-            oCard.Body.Add(oTable);
-            oRoot.Add(oCard);
+            if (!vIsAdmin)
+            {
+                // Regular user: the filter/search card also carries the table.
+                oCard.Body.Add(oTable);
+                oRoot.Add(oCard);
+            }
+            else
+            {
+                // Admin: the filter card stays common above the tab strip; the grid goes
+                // in the List tab and the Kanban board (same rows) in the Kanban tab.
+                oRoot.Add(oCard);
+
+                // ----- Build the Kanban board from the same rows -----
+                string vKanbanHTML = CreateTicketBoard(aRows).HTML;
+
+                // ----- Tabs: List | Kanban -----
+                var oTabs = new TsgcHTMLContainer("ul");
+                oTabs.CSSClass = "nav nav-tabs mb-3";
+                oTabs.Attributes = "role=\"tablist\"";
+
+                var oTabLi = new TsgcHTMLContainer("li");
+                oTabLi.CSSClass = "nav-item";
+                oTabLi.Attributes = "role=\"presentation\"";
+                var oTabBtn = new TsgcHTMLContainer("button");
+                oTabBtn.CSSClass = "nav-link active";
+                oTabBtn.Attributes = "data-bs-toggle=\"tab\" data-bs-target=\"#hdListPane\" " +
+                    "type=\"button\" role=\"tab\"";
+                oTabBtn.AddText("List");
+                oTabLi.Add(oTabBtn);
+                oTabs.Add(oTabLi);
+
+                oTabLi = new TsgcHTMLContainer("li");
+                oTabLi.CSSClass = "nav-item";
+                oTabLi.Attributes = "role=\"presentation\"";
+                oTabBtn = new TsgcHTMLContainer("button");
+                oTabBtn.CSSClass = "nav-link";
+                oTabBtn.Attributes = "data-bs-toggle=\"tab\" data-bs-target=\"#hdKanbanPane\" " +
+                    "type=\"button\" role=\"tab\"";
+                oTabBtn.AddText("Kanban");
+                oTabLi.Add(oTabBtn);
+                oTabs.Add(oTabLi);
+
+                oRoot.Add(oTabs);
+
+                var oTabContent = new TsgcHTMLContainer("div");
+                oTabContent.CSSClass = "tab-content";
+
+                var oListPane = new TsgcHTMLContainer("div");
+                oListPane.CSSClass = "tab-pane fade show active";
+                oListPane.ID = "hdListPane";
+                oListPane.Attributes = "role=\"tabpanel\"";
+                var oListCard = new TsgcHTMLCard();
+                oListCard.CSSClass = "shadow-sm";
+                oListCard.BodyClass = "card-body";
+                oListCard.Body.Add(oTable);
+                oListPane.Add(oListCard);
+                oTabContent.Add(oListPane);
+
+                var oKanbanPane = new TsgcHTMLContainer("div");
+                oKanbanPane.CSSClass = "tab-pane fade";
+                oKanbanPane.ID = "hdKanbanPane";
+                oKanbanPane.Attributes = "role=\"tabpanel\"";
+                var oKanHint = new TsgcHTMLContainer("p");
+                oKanHint.CSSClass = "text-muted small";
+                oKanHint.AddText("Drag a card to another column to change its status " +
+                    "or to another lane to change its priority (a ticket is closed only " +
+                    "from Pending Feedback). Click a card to edit it, use + to add one.");
+                oKanbanPane.Add(oKanHint);
+                // the board is a component that renders its own markup
+                oKanbanPane.AddRaw(vKanbanHTML);
+                oTabContent.Add(oKanbanPane);
+
+                oRoot.Add(oTabContent);
+
+                // htmx runs the board's quick add and edit dialog requests
+                oRoot.Add(new TsgcHTMLScript("/htmx.min.js"));
+                if (LiveSync)
+                {
+                    // live sync: the sgcHTMX bridge opens a WebSocket to this server and
+                    // applies the card fragments pushed after every change
+                    oRoot.Add(new TsgcHTMLScript("/sgcWebSockets.js"));
+                    oRoot.Add(new TsgcHTMLScript("/sgcHTMX.min.js"));
+                    var oScript = new TsgcHTMLScript();
+                    oScript.Code = "document.addEventListener(\"DOMContentLoaded\"," +
+                        "function(){if(window.sgcHTMX&&sgcHTMX.init){sgcHTMX.init({host:" +
+                        "(location.protocol===\"https:\"?\"wss:\":\"ws:\")+\"//\"+location.host+" +
+                        "location.pathname});}});";
+                    oRoot.Add(oScript);
+                }
+            }
 
             return BuildPageShell(vIsAdmin ? "All Tickets" : "My Tickets", oRoot.HTML,
                 "tickets", aDisplayName, aRole, aTheme);
@@ -815,7 +1168,7 @@ namespace Helpdesk
             THelpdeskMessage[] aMessages, string aRole, string aDisplayName, string aTheme,
             bool aCanReply, bool aCanModerate, string aError = "", string aFlash = "")
         {
-            bool vIsOpen = string.Equals(aTicket.Status, "open", StringComparison.OrdinalIgnoreCase);
+            bool vIsOpen = !string.Equals(aTicket.Status, "closed", StringComparison.OrdinalIgnoreCase);
             var oRoot = new TsgcHTMLNodeList();
 
             // Self-dismissing flash toast.

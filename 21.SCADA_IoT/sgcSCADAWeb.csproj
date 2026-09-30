@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    SCADA + IoT demo on ASP.NET Core (mirror of demos\60.HTML\21.SCADA_IoT).
+
+    The 60.HTML version hosts a TsgcWebSocketHTTPServer, maps MQTT topics onto
+    the HMI components with TsgcHTMLInstrumentsMQTTBinder and pushes the
+    fragments through TsgcHTMX_Engine_Server. This mirror hosts the same plant
+    on Kestrel:
+
+      - The ASP.NET Core adapter serves the client assets (htmx, sgcWebSockets.js,
+        the sgcHTMX bridge) and OWNS the WebSocket channel at /ws.
+      - This app owns "/", POST /cmd and POST /ack (Minimal API).
+      - Fragments are pushed through ISgcHtmlHub.BroadcastAsync.
+
+    SIMULATE MODE ONLY. esegece.sgcHTML.AspNetCore is self-contained: it does
+    not contain the MQTT binder (sgcHTML_Instruments_MQTT.cs is compiled only
+    without SGC_HTML_STANDALONE) and cannot be referenced together with
+    esegece.sgcWebSockets / esegece.sgcHTML (CS0433 on the duplicated public
+    types, and the SGCHTML001 guard of the package). sgcSCADA_Plant.cs keeps
+    the PLC and the HMI of the 60.HTML demo and replaces the binder with a
+    small demo-side dispatcher that calls the same live fragment methods.
+
+    Nullable + ImplicitUsings are disabled, matching the 60.HTML build.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RootNamespace>SCADADemo</RootNamespace>
+    <AssemblyName>sgcSCADAWeb</AssemblyName>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\sgcHTML.AspNetCore\esegece.sgcHTML.AspNetCore.csproj" Condition="'$(SgcHTMLAspNetCoreUseProject)' == 'true'" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="sgcSCADAServer.conf.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

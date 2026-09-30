@@ -684,11 +684,8 @@ namespace LiveMonitor
         // counterpart of the 60.HTML FHTTP.Count).
         //
         // The reused BuildMonitorDashboardPage hard-codes ws-connect="/" (the
-        // self-hosted server accepted the WebSocket upgrade at the root path). Under
-        // Kestrel the adapter accepts the htmx WebSocket at /ws (SgcHtmlOptions
-        // .WebSocketPath), so the page's ws-connect is retargeted to /ws here. This
-        // keeps the copied page builder verbatim while the rendered page connects to
-        // the path the adapter actually serves.
+        // self-hosted server accepted the WebSocket upgrade at the root path); the
+        // adapter accepts it there too (AcceptWebSocketOnAnyPath in Program.cs).
         public IResult DashboardGet(HttpContext aCtx, TERPSession aSession)
         {
             string vTheme = ReadThemeCookie(aCtx);
@@ -697,7 +694,6 @@ namespace LiveMonitor
 
             string vHtml = FPages.BuildMonitorDashboardPage(aSession.DisplayName,
                 aSession.Role, vTheme, vLang, vCount);
-            vHtml = vHtml.Replace("ws-connect=\"/\"", "ws-connect=\"/ws\"");
             return Html(200, vHtml);
         }
 

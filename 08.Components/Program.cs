@@ -63,7 +63,13 @@ var builder = WebApplication.CreateBuilder(args);
 
 // The app renders its own pages, so the adapter serves assets + the WebSocket
 // channel only (ServeRootPage = false hands page routing back to the pipeline).
-builder.Services.AddSgcHtml(o => o.ServeRootPage = false);
+// The sgcHTMX bridge of the page shell connects to the site root, so the adapter
+// accepts the channel on any path (not only /ws).
+builder.Services.AddSgcHtml(o =>
+{
+    o.ServeRootPage = false;
+    o.AcceptWebSocketOnAnyPath = true;
+});
 
 // The live push loop (mirror of the 60.HTML background push thread).
 builder.Services.AddHostedService<ComponentsPushService>();
